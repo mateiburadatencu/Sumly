@@ -64,7 +64,7 @@ async function callOpenAI(system: string, user: string): Promise<string> {
 
   const choice = response.choices[0];
   // For reasoning models, content may be in message.content or refusal
-  const content = choice?.message?.content ?? (choice?.message as Record<string, unknown>)?.reasoning_content as string ?? null;
+  const content = choice?.message?.content ?? ((choice?.message as unknown as Record<string, unknown>)?.reasoning_content as string) ?? null;
 
   if (!content) {
     console.error('Empty OpenAI response. finish_reason:', choice?.finish_reason, 'Full choice:', JSON.stringify(choice));

@@ -117,11 +117,11 @@ export async function POST(request: NextRequest) {
       if (isTrial && userId) {
         const newCount = trialSummariesUsed + 1;
         trackingTasks.push(
-          supabase.from('profiles')
+          Promise.resolve(supabase.from('profiles')
             .update({ trial_summaries_used: newCount })
-            .eq('id', userId),
-          supabase.from('trial_ips')
-            .upsert({ ip_address: ip, user_id: userId }, { onConflict: 'ip_address', ignoreDuplicates: true }),
+            .eq('id', userId)),
+          Promise.resolve(supabase.from('trial_ips')
+            .upsert({ ip_address: ip, user_id: userId }, { onConflict: 'ip_address', ignoreDuplicates: true })),
         );
       }
 
