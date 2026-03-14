@@ -60,9 +60,9 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
     errors.push(`whisper: ${msg}`);
   }
 
-  console.error('All transcript strategies failed:', errors);
+  console.error('All transcript strategies failed:', JSON.stringify(errors));
   throw new TranscriptError(
-    'This video doesn\'t have captions or subtitles available, which are required for summarization. Most YouTube videos have auto-generated captions — try a different video.'
+    `Could not get a transcript for this video. Details: ${errors.join(' | ')}`
   );
 }
 
@@ -268,8 +268,11 @@ async function strategy3_whisper(videoId: string): Promise<TranscriptResult> {
   }
 
   // Step 2: Find the best audio-only stream
-  const formats: Array<{ itag: number; mimeType?: string; url?: string; contentLength?: string }> =
+  const formats: Array<{ itag: number; mimeType?: string; url?: string; signatureCipher?: string; contentLength?: string }> =
     playerData.streamingData?.adaptiveFormats ?? [];
+
+  console.log(`[Transcript] S3: found ${formats.length} formats, streamingData keys: ${Object.keys(playerData.streamingData ?? {}).join(',')}`);
+  console.log(`[Transcript] S3: format itags: ${formats.map(f => `${f.itag}(url:${!!f.url},cipher:${!!f.signatureCipher})`).join(',')}`);
 
   // Android client returns plain URLs (no cipher needed)
   const audioFormat =
@@ -277,14 +280,20 @@ async function strategy3_whisper(videoId: string): Promise<TranscriptResult> {
     formats.find(f => f.itag === 251 && f.url) ||      // webm/opus
     formats.find(f => f.mimeType?.startsWith('audio/') && f.url);
 
-  if (!audioFormat?.url) throw new TranscriptError('No audio stream found for this video.');
+  if (!audioFormat?.url) {
+    const cipherFormats = formats.filter(f => f.signatureCipher);
+    throw new TranscriptError(`No plain audio stream found. Total formats: ${formats.length}, cipher-only: ${cipherFormats.length}`);
+  }
+
+  console.log(`[Transcript] S3: downloading itag ${audioFormat.itag}, mime: ${audioFormat.mimeType}`);
 
   // Step 3: Download audio (with size limit for Whisper's 25MB cap)
   const audioRes = await fetch(audioFormat.url, {
     headers: { Range: `bytes=0-${WHISPER_MAX_BYTES - 1}` },
   });
+  console.log(`[Transcript] S3: audio download status: ${audioRes.status}, size header: ${audioRes.headers.get('content-length')}`);
   if (!audioRes.ok && audioRes.status !== 206) {
-    throw new TranscriptError('Could not download audio from this video.');
+    throw new TranscriptError(`Audio download failed with HTTP ${audioRes.status}`);
   }
 
   const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
