@@ -1,7 +1,6 @@
 import { YoutubeTranscript } from 'youtube-transcript';
 import { createHash } from 'crypto';
 import OpenAI from 'openai';
-import { Innertube } from 'youtubei.js';
 
 const MAX_CHUNK_TOKENS = 12000;
 const APPROX_CHARS_PER_TOKEN = 4;
@@ -229,70 +228,79 @@ async function strategy2_youtubeTranscript(videoId: string): Promise<TranscriptR
 }
 
 // ─── Strategy 3: Audio download + Whisper ──────────────────────
+// Uses the same lightweight InnerTube Android API as Strategy 1 to get
+// audio stream URLs directly, avoiding heavy youtubei.js initialization
+// and YouTube's IP blocks on cloud servers.
 
 async function strategy3_whisper(videoId: string): Promise<TranscriptResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new TranscriptError('OpenAI API key required for audio transcription.');
 
-  const yt = await Innertube.create();
+  // Step 1: Get player data via InnerTube (same approach as Strategy 1)
+  const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+  if (!pageRes.ok) throw new TranscriptError('Could not access this video.');
+  const html = await pageRes.text();
 
-  let info;
-  try {
-    info = await yt.getBasicInfo(videoId);
-  } catch {
-    throw new TranscriptError('Could not access this video.');
+  const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)"/);
+  if (!apiKeyMatch) throw new TranscriptError('Could not access this video.');
+
+  const durationMatch = html.match(/"lengthSeconds":"(\d+)"/);
+  const duration = durationMatch ? parseInt(durationMatch[1], 10) : 0;
+
+  const playerRes = await fetch(
+    `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: INNERTUBE_CONTEXT, videoId }),
+    }
+  );
+  if (!playerRes.ok) throw new TranscriptError('Could not load video data.');
+
+  const playerData = await playerRes.json();
+  if (playerData.playabilityStatus?.status !== 'OK') {
+    throw new TranscriptError('This video is not available for transcription.');
   }
 
-  const duration = info.basic_info?.duration ?? 0;
+  // Step 2: Find the best audio-only stream
+  const formats: Array<{ itag: number; mimeType?: string; url?: string; contentLength?: string }> =
+    playerData.streamingData?.adaptiveFormats ?? [];
 
-  let audioBuffer: Buffer;
-  try {
-    const stream = await yt.download(videoId, {
-      type: 'audio',
-      quality: 'bestefficiency',
-    });
-    const parts: Uint8Array[] = [];
-    const reader = stream.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      parts.push(value);
-    }
-    audioBuffer = Buffer.concat(parts);
-  } catch {
+  // Android client returns plain URLs (no cipher needed)
+  const audioFormat =
+    formats.find(f => f.itag === 140 && f.url) ||      // m4a 128kbps (best compat with Whisper)
+    formats.find(f => f.itag === 251 && f.url) ||      // webm/opus
+    formats.find(f => f.mimeType?.startsWith('audio/') && f.url);
+
+  if (!audioFormat?.url) throw new TranscriptError('No audio stream found for this video.');
+
+  // Step 3: Download audio (with size limit for Whisper's 25MB cap)
+  const audioRes = await fetch(audioFormat.url, {
+    headers: { Range: `bytes=0-${WHISPER_MAX_BYTES - 1}` },
+  });
+  if (!audioRes.ok && audioRes.status !== 206) {
     throw new TranscriptError('Could not download audio from this video.');
   }
 
-  if (audioBuffer.length === 0) {
-    throw new TranscriptError('Downloaded audio is empty.');
-  }
+  const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+  if (audioBuffer.length === 0) throw new TranscriptError('Downloaded audio is empty.');
 
-  if (audioBuffer.length > WHISPER_MAX_BYTES) {
-    return transcribeLargeAudio(apiKey, audioBuffer, duration);
-  }
-
-  const text = await whisperTranscribe(apiKey, audioBuffer);
+  // Step 4: Transcribe with Whisper
+  const mimeType = audioFormat.mimeType?.split(';')[0] ?? 'audio/mp4';
+  const ext = mimeType.includes('webm') ? 'webm' : 'm4a';
+  const text = await whisperTranscribe(apiKey, audioBuffer, ext, mimeType);
   return buildResult(text, duration);
 }
 
-async function transcribeLargeAudio(
-  apiKey: string, fullBuffer: Buffer, duration: number
-): Promise<TranscriptResult> {
-  const count = Math.ceil(fullBuffer.length / WHISPER_MAX_BYTES);
-  const size = Math.ceil(fullBuffer.length / count);
-  const parts: string[] = [];
 
-  for (let i = 0; i < count; i++) {
-    const chunk = fullBuffer.subarray(i * size, Math.min((i + 1) * size, fullBuffer.length));
-    parts.push(await whisperTranscribe(apiKey, Buffer.from(chunk)));
-  }
-
-  return buildResult(parts.join(' ').replace(/\s+/g, ' ').trim(), duration);
-}
-
-async function whisperTranscribe(apiKey: string, buffer: Buffer): Promise<string> {
+async function whisperTranscribe(apiKey: string, buffer: Buffer, ext = 'webm', mimeType = 'audio/webm'): Promise<string> {
   const openai = new OpenAI({ apiKey });
-  const file = new File([new Uint8Array(buffer)], 'audio.webm', { type: 'audio/webm' });
+  const file = new File([new Uint8Array(buffer)], `audio.${ext}`, { type: mimeType });
 
   const response = await openai.audio.transcriptions.create({
     model: 'whisper-1',
