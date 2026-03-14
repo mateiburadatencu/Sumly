@@ -7,15 +7,6 @@ const APPROX_CHARS_PER_TOKEN = 4;
 const MAX_CHUNK_CHARS = MAX_CHUNK_TOKENS * APPROX_CHARS_PER_TOKEN;
 const WHISPER_MAX_BYTES = 24 * 1024 * 1024;
 
-// Client contexts tried in order — each bypasses different YouTube restrictions
-const INNERTUBE_CLIENT_CONFIGS = [
-  { clientName: 'ANDROID', clientVersion: '20.10.38', androidSdkVersion: 34 },
-  { clientName: 'ANDROID_EMBEDDED_PLAYER', clientVersion: '17.31.35', androidSdkVersion: 30 },
-  { clientName: 'IOS', clientVersion: '19.29.1' },
-  { clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', clientVersion: '2.0', clientScreen: 'EMBED' },
-  { clientName: 'WEB', clientVersion: '2.20231121.08.00' },
-];
-
 export interface TranscriptResult {
   text: string;
   hash: string;
@@ -27,14 +18,14 @@ export interface TranscriptResult {
 type PlayerData = Record<string, any>;
 
 /**
- * Fetch YouTube player data ONCE via InnerTube Android API.
- * Shared by all strategies to avoid rate-limiting from multiple requests.
+ * Fetch YouTube player data via InnerTube Android API.
+ * Returns null if the video is inaccessible or blocked.
  */
 async function fetchPlayerData(videoId: string): Promise<{ playerData: PlayerData; duration: number } | null> {
   try {
     const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'com.google.android.youtube/20.10.38 (Linux; U; Android 14)',
         'Accept-Language': 'en-US,en;q=0.9',
       },
     });
@@ -47,98 +38,88 @@ async function fetchPlayerData(videoId: string): Promise<{ playerData: PlayerDat
     const durationMatch = html.match(/"lengthSeconds":"(\d+)"/);
     const pageDuration = durationMatch ? parseInt(durationMatch[1], 10) : 0;
 
-    // Extract signatureTimestamp (sts) from page — needed for some client contexts
-    const stsMatch = html.match(/"signatureTimestamp"\s*:\s*(\d+)/);
-    const sts = stsMatch ? parseInt(stsMatch[1], 10) : undefined;
-
-    // Try each client config until one returns OK playability
-    for (const clientConfig of INNERTUBE_CLIENT_CONFIGS) {
-      try {
-        const context: Record<string, unknown> = { client: { ...clientConfig, hl: 'en', gl: 'US' } };
-        if (sts) (context.client as Record<string, unknown>).signatureTimestamp = sts;
-        if (clientConfig.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
-          context.thirdParty = { embedUrl: `https://www.youtube.com/embed/${videoId}` };
-        }
-
-        const playerRes = await fetch(
-          `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-YouTube-Client-Name': '1', 'X-YouTube-Client-Version': clientConfig.clientVersion },
-            body: JSON.stringify({ context, videoId }),
-          }
-        );
-        if (!playerRes.ok) { console.log(`[Transcript] ${clientConfig.clientName}: HTTP ${playerRes.status}`); continue; }
-
-        const playerData = await playerRes.json();
-        const status = playerData.playabilityStatus?.status;
-        const duration = playerData.videoDetails?.lengthSeconds
-          ? parseInt(playerData.videoDetails.lengthSeconds, 10)
-          : pageDuration;
-
-        console.log(`[Transcript] ${clientConfig.clientName}: playability=${status}, duration=${duration}s`);
-        if (status === 'OK') return { playerData, duration };
-      } catch (e) {
-        console.log(`[Transcript] ${clientConfig.clientName} error: ${e instanceof Error ? e.message : e}`);
+    const playerRes = await fetch(
+      `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoId,
+          context: {
+            client: {
+              clientName: 'ANDROID',
+              clientVersion: '20.10.38',
+              androidSdkVersion: 30,
+              userAgent: 'com.google.android.youtube/20.10.38 (Linux; U; Android 10) gzip',
+            },
+          },
+        }),
       }
-    }
+    );
+    if (!playerRes.ok) return null;
 
-    console.log('[Transcript] All client contexts failed to get OK playability');
-    return null;
+    const playerData = await playerRes.json();
+    const status = playerData.playabilityStatus?.status;
+    const duration = playerData.videoDetails?.lengthSeconds
+      ? parseInt(playerData.videoDetails.lengthSeconds, 10)
+      : pageDuration;
+
+    console.log(`[Transcript] Player data: status=${status}, duration=${duration}s`);
+
+    if (status !== 'OK') return null;
+    return { playerData, duration };
   } catch (e) {
-    console.log(`[Transcript] fetchPlayerData failed: ${e instanceof Error ? e.message : e}`);
+    console.log(`[Transcript] fetchPlayerData error: ${e instanceof Error ? e.message : e}`);
     return null;
   }
 }
 
 /**
- * Main entry point. Fetches player data once, then tries:
- * 1. Captions from player data (fastest)
+ * Main entry point. Tries strategies in order:
+ * 1. Captions from InnerTube (fastest, most reliable)
  * 2. youtube-transcript package (fallback)
- * 3. Audio download + Whisper (works even when captions are disabled)
+ * 3. Audio download + Whisper (for videos with no captions)
  */
 export async function fetchTranscript(videoId: string): Promise<TranscriptResult> {
   const errors: string[] = [];
 
-  // Single player data fetch — reused by strategies 1 and 3
+  // Fetch player data once — shared by strategies 1 and 3
   const playerResult = await fetchPlayerData(videoId);
   const playerData = playerResult?.playerData ?? null;
   const duration = playerResult?.duration ?? 0;
-  const playerOk = playerData?.playabilityStatus?.status === 'OK';
 
-  // Strategy 1: Captions from player data
-  if (playerOk) {
+  // Strategy 1: Captions from InnerTube
+  if (playerData) {
     try {
       console.log(`[Transcript] Strategy 1: captions for ${videoId}`);
-      const result = await extractCaptionsFromPlayerData(playerData, duration);
+      const result = await extractCaptions(playerData, duration);
       if (result) { console.log('[Transcript] Strategy 1 succeeded'); return result; }
-      errors.push('android-innertube: no captions found');
+      errors.push('innertube: no captions found');
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'failed';
-      console.log(`[Transcript] Strategy 1 failed: ${msg}`);
-      errors.push(`android-innertube: ${msg}`);
+      errors.push(`innertube: ${msg}`);
     }
   } else {
-    errors.push(`android-innertube: playability=${playerData?.playabilityStatus?.status ?? 'no-data'}`);
+    errors.push('innertube: could not load player data');
   }
 
-  // Strategy 2: youtube-transcript npm package
+  // Strategy 2: youtube-transcript package
   try {
     console.log(`[Transcript] Strategy 2: youtube-transcript for ${videoId}`);
-    const result = await strategy2_youtubeTranscript(videoId);
+    const result = await youtubeTranscriptFallback(videoId);
     if (result) { console.log('[Transcript] Strategy 2 succeeded'); return result; }
-    errors.push('youtube-transcript: no segments found');
+    errors.push('youtube-transcript: no segments');
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'failed';
     console.log(`[Transcript] Strategy 2 failed: ${msg}`);
     errors.push(`youtube-transcript: ${msg}`);
   }
 
-  // Strategy 3: Audio stream + Whisper (works even without captions)
-  if (playerOk) {
+  // Strategy 3: Audio + Whisper (no captions needed)
+  if (playerData) {
     try {
       console.log(`[Transcript] Strategy 3: whisper for ${videoId}`);
-      const result = await strategy3_whisperFromPlayerData(playerData, duration);
+      const result = await whisperFromPlayerData(playerData, duration);
       console.log('[Transcript] Strategy 3 succeeded');
       return result;
     } catch (e) {
@@ -147,196 +128,163 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
       errors.push(`whisper: ${msg}`);
     }
   } else {
-    errors.push('whisper: skipped (no valid player data)');
+    errors.push('whisper: no player data (video may be age-restricted or require login)');
   }
 
-  console.error('All transcript strategies failed:', JSON.stringify(errors));
+  console.error('[Transcript] All strategies failed:', errors);
   throw new TranscriptError(
-    `Could not get a transcript for this video. Details: ${errors.join(' | ')}`
+    `Could not get a transcript for this video. ${errors.join(' | ')}`
   );
 }
 
-// ─── Strategy 1: Captions from player data ─────────────────────────
+// ─── Strategy 1: Extract captions ──────────────────────────────────
 
-async function extractCaptionsFromPlayerData(playerData: PlayerData, duration: number): Promise<TranscriptResult | null> {
-  const captionTracks = playerData.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-  if (!captionTracks || captionTracks.length === 0) return null;
+async function extractCaptions(playerData: PlayerData, duration: number): Promise<TranscriptResult | null> {
+  const tracks = playerData.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  if (!tracks || tracks.length === 0) return null;
 
-  console.log(`[Transcript] S1: found ${captionTracks.length} caption track(s)`);
+  console.log(`[Transcript] S1: ${tracks.length} caption track(s) available`);
 
-  // Prefer manual English, then auto-generated English, then any track
   const track =
-    captionTracks.find((t: { languageCode: string; kind?: string }) => t.languageCode === 'en' && t.kind !== 'asr') ||
-    captionTracks.find((t: { languageCode: string }) => t.languageCode === 'en') ||
-    captionTracks.find((t: { kind?: string }) => t.kind !== 'asr') ||
-    captionTracks[0];
+    tracks.find((t: { languageCode: string; kind?: string }) => t.languageCode === 'en' && t.kind !== 'asr') ||
+    tracks.find((t: { languageCode: string }) => t.languageCode === 'en') ||
+    tracks.find((t: { kind?: string }) => t.kind !== 'asr') ||
+    tracks[0];
 
-  const baseUrl: string = track?.baseUrl;
-  if (!baseUrl) return null;
+  if (!track?.baseUrl) return null;
 
-  const text = await fetchCaptionText(baseUrl);
+  const text = await fetchCaptionXml(track.baseUrl);
   if (!text) return null;
 
   return buildResult(text, duration);
 }
 
-async function fetchCaptionText(baseUrl: string): Promise<string | null> {
-  const cleanUrl = baseUrl.replace('&fmt=srv3', '');
-  const res = await fetch(cleanUrl);
-  if (!res.ok) {
-    console.log(`[Transcript] fetchCaptionText: HTTP ${res.status}`);
-    return null;
-  }
+async function fetchCaptionXml(baseUrl: string): Promise<string | null> {
+  const url = baseUrl.replace('&fmt=srv3', '');
+  const res = await fetch(url);
+  if (!res.ok) return null;
 
   const body = await res.text();
-  if (!body || body.length === 0) return null;
+  if (!body) return null;
 
-  // Format 1: <transcript><text start="..." dur="...">...</text></transcript>
-  const textMatches = body.match(/<text[^>]*>([^<]*(?:<[^/][^>]*>[^<]*)*)<\/text>/g);
-  if (textMatches && textMatches.length > 0) {
-    const texts = textMatches.map(m => decodeXmlEntities(m.replace(/<[^>]+>/g, '')).trim()).filter(Boolean);
-    if (texts.length > 0) { console.log(`[Transcript] S1: parsed ${texts.length} text elements`); return cleanSegmentTexts(texts); }
+  const textMatches = body.match(/<text[^>]*>([\s\S]*?)<\/text>/g);
+  if (textMatches?.length) {
+    const texts = textMatches.map(m => decodeXml(m.replace(/<[^>]+>/g, '')).trim()).filter(Boolean);
+    if (texts.length) return cleanText(texts);
   }
 
-  // Format 2: <p t="..." d="...">...</p>
   const pMatches = body.match(/<p [^>]*>([\s\S]*?)<\/p>/g);
-  if (pMatches && pMatches.length > 0) {
-    const texts = pMatches.map(m => decodeXmlEntities(m.replace(/<[^>]+>/g, '')).trim()).filter(Boolean);
-    if (texts.length > 0) { console.log(`[Transcript] S1: parsed ${texts.length} p elements`); return cleanSegmentTexts(texts); }
+  if (pMatches?.length) {
+    const texts = pMatches.map(m => decodeXml(m.replace(/<[^>]+>/g, '')).trim()).filter(Boolean);
+    if (texts.length) return cleanText(texts);
   }
 
   return null;
 }
 
-function decodeXmlEntities(str: string): string {
+function decodeXml(str: string): string {
   return str
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec)));
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d)));
 }
 
-// ─── Strategy 2: youtube-transcript npm package ────────────────────
+// ─── Strategy 2: youtube-transcript package ────────────────────────
 
-async function strategy2_youtubeTranscript(videoId: string): Promise<TranscriptResult | null> {
+async function youtubeTranscriptFallback(videoId: string): Promise<TranscriptResult | null> {
   const segments = await YoutubeTranscript.fetchTranscript(videoId);
-  if (!segments || segments.length === 0) return null;
+  if (!segments?.length) return null;
 
-  const text = cleanSegmentTexts(segments.map(s => s.text));
+  const text = cleanText(segments.map(s => s.text));
   if (!text) return null;
 
-  const lastSeg = segments[segments.length - 1];
-  const duration = Math.ceil((lastSeg.offset + lastSeg.duration) / 1000);
-  return buildResult(text, duration);
+  const last = segments[segments.length - 1];
+  return buildResult(text, Math.ceil((last.offset + last.duration) / 1000));
 }
 
 // ─── Strategy 3: Audio stream + Whisper ───────────────────────────
-// Reuses already-fetched player data — no extra YouTube requests.
 
-async function strategy3_whisperFromPlayerData(playerData: PlayerData, duration: number): Promise<TranscriptResult> {
+async function whisperFromPlayerData(playerData: PlayerData, duration: number): Promise<TranscriptResult> {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new TranscriptError('OpenAI API key required for audio transcription.');
+  if (!apiKey) throw new TranscriptError('OpenAI API key missing.');
 
   const formats: Array<{ itag: number; mimeType?: string; url?: string; signatureCipher?: string }> =
     playerData.streamingData?.adaptiveFormats ?? [];
 
-  console.log(`[Transcript] S3: ${formats.length} formats, itags: ${formats.map(f => `${f.itag}(url:${!!f.url})`).join(',')}`);
+  console.log(`[Transcript] S3: ${formats.length} formats, plain-url count: ${formats.filter(f => f.url).length}`);
 
-  // Android client returns plain (non-ciphered) stream URLs
-  const audioFormat =
-    formats.find(f => f.itag === 140 && f.url) ||   // m4a 128kbps
-    formats.find(f => f.itag === 251 && f.url) ||   // webm/opus
+  const audio =
+    formats.find(f => f.itag === 140 && f.url) ||
+    formats.find(f => f.itag === 251 && f.url) ||
     formats.find(f => f.mimeType?.startsWith('audio/') && f.url);
 
-  if (!audioFormat?.url) {
-    const cipherCount = formats.filter(f => f.signatureCipher && !f.url).length;
-    throw new TranscriptError(`No plain audio stream (${formats.length} formats, ${cipherCount} cipher-only)`);
-  }
+  if (!audio?.url) throw new TranscriptError('No downloadable audio stream found.');
 
-  console.log(`[Transcript] S3: downloading itag ${audioFormat.itag} (${audioFormat.mimeType})`);
-
-  const audioRes = await fetch(audioFormat.url, {
+  const audioRes = await fetch(audio.url, {
     headers: { Range: `bytes=0-${WHISPER_MAX_BYTES - 1}` },
   });
-  console.log(`[Transcript] S3: HTTP ${audioRes.status}, size: ${audioRes.headers.get('content-length')}`);
 
   if (!audioRes.ok && audioRes.status !== 206) {
-    throw new TranscriptError(`Audio download returned HTTP ${audioRes.status}`);
+    throw new TranscriptError(`Audio download HTTP ${audioRes.status}`);
   }
 
-  const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
-  if (audioBuffer.length === 0) throw new TranscriptError('Downloaded audio is empty.');
+  const buf = Buffer.from(await audioRes.arrayBuffer());
+  if (!buf.length) throw new TranscriptError('Empty audio download.');
 
-  console.log(`[Transcript] S3: ${audioBuffer.length} bytes downloaded, transcribing with Whisper`);
+  console.log(`[Transcript] S3: ${buf.length} bytes, sending to Whisper`);
 
-  const mimeType = audioFormat.mimeType?.split(';')[0] ?? 'audio/mp4';
-  const ext = mimeType.includes('webm') ? 'webm' : 'm4a';
-  const text = await whisperTranscribe(apiKey, audioBuffer, ext, mimeType);
-  return buildResult(text, duration);
-}
-
-async function whisperTranscribe(apiKey: string, buffer: Buffer, ext = 'm4a', mimeType = 'audio/mp4'): Promise<string> {
+  const mime = audio.mimeType?.split(';')[0] ?? 'audio/mp4';
+  const ext = mime.includes('webm') ? 'webm' : 'm4a';
   const openai = new OpenAI({ apiKey });
-  const file = new File([new Uint8Array(buffer)], `audio.${ext}`, { type: mimeType });
-
-  const response = await openai.audio.transcriptions.create({
-    model: 'whisper-1',
-    file,
-    response_format: 'text',
-  });
+  const file = new File([new Uint8Array(buf)], `audio.${ext}`, { type: mime });
+  const response = await openai.audio.transcriptions.create({ model: 'whisper-1', file, response_format: 'text' });
 
   const text = typeof response === 'string' ? response : String(response);
   if (!text?.trim()) throw new TranscriptError('Whisper returned empty transcript.');
-  return text.trim();
+
+  return buildResult(text.trim(), duration);
 }
 
-// ─── Shared Utilities ──────────────────────────────────────────────
+// ─── Utilities ─────────────────────────────────────────────────────
 
-function cleanSegmentTexts(texts: string[]): string {
+function cleanText(texts: string[]): string {
   const seen = new Set<string>();
-  const lines: string[] = [];
+  const out: string[] = [];
   for (const raw of texts) {
-    const cleaned = raw.replace(/\[.*?\]/g, '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-    if (cleaned && !seen.has(cleaned)) { seen.add(cleaned); lines.push(cleaned); }
+    const t = raw.replace(/\[.*?\]/g, '').replace(/\s+/g, ' ').trim();
+    if (t && !seen.has(t)) { seen.add(t); out.push(t); }
   }
-  return lines.join(' ').replace(/\s+/g, ' ').trim();
+  return out.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 function buildResult(text: string, durationSeconds: number): TranscriptResult {
-  const hash = createHash('sha256').update(text).digest('hex');
-  const chunks = chunkTranscript(text);
-  return { text, hash, chunks, durationSeconds };
+  return { text, hash: createHash('sha256').update(text).digest('hex'), chunks: chunkTranscript(text), durationSeconds };
 }
 
 export function chunkTranscript(text: string): string[] {
   if (text.length <= MAX_CHUNK_CHARS) return [text];
-
   const chunks: string[] = [];
   const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
   let current = '';
-
-  for (const sentence of sentences) {
-    if ((current + sentence).length > MAX_CHUNK_CHARS) {
+  for (const s of sentences) {
+    if ((current + s).length > MAX_CHUNK_CHARS) {
       if (current) { chunks.push(current.trim()); current = ''; }
-      if (sentence.length > MAX_CHUNK_CHARS) {
-        const words = sentence.split(' ');
+      if (s.length > MAX_CHUNK_CHARS) {
+        const words = s.split(' ');
         let wc = '';
         for (const w of words) {
           if ((wc + ' ' + w).length > MAX_CHUNK_CHARS) { chunks.push(wc.trim()); wc = w; }
           else wc += ' ' + w;
         }
         if (wc) current = wc;
-      } else { current = sentence; }
-    } else { current += sentence; }
+      } else { current = s; }
+    } else { current += s; }
   }
-
   if (current.trim()) chunks.push(current.trim());
   return chunks;
 }
 
 export class TranscriptError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TranscriptError';
-  }
+  constructor(message: string) { super(message); this.name = 'TranscriptError'; }
 }
