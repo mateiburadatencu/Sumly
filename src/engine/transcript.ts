@@ -7,16 +7,13 @@ const APPROX_CHARS_PER_TOKEN = 4;
 const MAX_CHUNK_CHARS = MAX_CHUNK_TOKENS * APPROX_CHARS_PER_TOKEN;
 const WHISPER_MAX_BYTES = 24 * 1024 * 1024;
 
-const INNERTUBE_CONTEXTS = [
-  // Android client — works for most videos
-  { client: { clientName: 'ANDROID', clientVersion: '20.10.38' } },
-  // TV embedded player — bypasses LOGIN_REQUIRED and age restrictions
-  {
-    client: { clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', clientVersion: '2.0' },
-    thirdParty: { embedUrl: 'https://www.youtube.com' },
-  },
-  // iOS client — additional fallback
-  { client: { clientName: 'IOS', clientVersion: '19.29.1' } },
+// Client contexts tried in order — each bypasses different YouTube restrictions
+const INNERTUBE_CLIENT_CONFIGS = [
+  { clientName: 'ANDROID', clientVersion: '20.10.38', androidSdkVersion: 34 },
+  { clientName: 'ANDROID_EMBEDDED_PLAYER', clientVersion: '17.31.35', androidSdkVersion: 30 },
+  { clientName: 'IOS', clientVersion: '19.29.1' },
+  { clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', clientVersion: '2.0', clientScreen: 'EMBED' },
+  { clientName: 'WEB', clientVersion: '2.20231121.08.00' },
 ];
 
 export interface TranscriptResult {
@@ -50,27 +47,40 @@ async function fetchPlayerData(videoId: string): Promise<{ playerData: PlayerDat
     const durationMatch = html.match(/"lengthSeconds":"(\d+)"/);
     const pageDuration = durationMatch ? parseInt(durationMatch[1], 10) : 0;
 
-    // Try each InnerTube client context until one returns OK playability
-    for (const context of INNERTUBE_CONTEXTS) {
-      const playerRes = await fetch(
-        `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ context, videoId }),
+    // Extract signatureTimestamp (sts) from page — needed for some client contexts
+    const stsMatch = html.match(/"signatureTimestamp"\s*:\s*(\d+)/);
+    const sts = stsMatch ? parseInt(stsMatch[1], 10) : undefined;
+
+    // Try each client config until one returns OK playability
+    for (const clientConfig of INNERTUBE_CLIENT_CONFIGS) {
+      try {
+        const context: Record<string, unknown> = { client: { ...clientConfig, hl: 'en', gl: 'US' } };
+        if (sts) (context.client as Record<string, unknown>).signatureTimestamp = sts;
+        if (clientConfig.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
+          context.thirdParty = { embedUrl: `https://www.youtube.com/embed/${videoId}` };
         }
-      );
-      if (!playerRes.ok) continue;
 
-      const playerData = await playerRes.json();
-      const status = playerData.playabilityStatus?.status;
-      const duration = playerData.videoDetails?.lengthSeconds
-        ? parseInt(playerData.videoDetails.lengthSeconds, 10)
-        : pageDuration;
+        const playerRes = await fetch(
+          `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-YouTube-Client-Name': '1', 'X-YouTube-Client-Version': clientConfig.clientVersion },
+            body: JSON.stringify({ context, videoId }),
+          }
+        );
+        if (!playerRes.ok) { console.log(`[Transcript] ${clientConfig.clientName}: HTTP ${playerRes.status}`); continue; }
 
-      console.log(`[Transcript] Client ${context.client.clientName}: playability=${status}, duration=${duration}s`);
+        const playerData = await playerRes.json();
+        const status = playerData.playabilityStatus?.status;
+        const duration = playerData.videoDetails?.lengthSeconds
+          ? parseInt(playerData.videoDetails.lengthSeconds, 10)
+          : pageDuration;
 
-      if (status === 'OK') return { playerData, duration };
+        console.log(`[Transcript] ${clientConfig.clientName}: playability=${status}, duration=${duration}s`);
+        if (status === 'OK') return { playerData, duration };
+      } catch (e) {
+        console.log(`[Transcript] ${clientConfig.clientName} error: ${e instanceof Error ? e.message : e}`);
+      }
     }
 
     console.log('[Transcript] All client contexts failed to get OK playability');
