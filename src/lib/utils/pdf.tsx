@@ -2,6 +2,7 @@ import React from 'react';
 import path from 'path';
 import { Document, Page, View, Text, Font, StyleSheet, renderToBuffer } from '@react-pdf/renderer';
 import type { SummaryData, BasicSummary, PlusSummary, ProSummary } from '@/engine/types';
+import type { CheatSheetData } from '@/app/api/cheat-sheet/route';
 
 const fontsDir = path.join(process.cwd(), 'src/assets/fonts');
 
@@ -354,5 +355,148 @@ function SummaryPdf({ videoTitle, summary, plan, addWatermark }: PdfOptions) {
 
 export async function generateSummaryPdf(options: PdfOptions): Promise<Buffer> {
   const buffer = await renderToBuffer(<SummaryPdf {...options} />);
+  return Buffer.from(buffer);
+}
+
+// ─── Cheat Sheet PDF ───────────────────────────────────────────────────────────
+
+const yellow = '#fef9c3';
+const yellowBorder = '#fde047';
+const green50 = '#f0fdf4';
+const greenBorder = '#86efac';
+const blue50 = '#eff6ff';
+const blueBorder = '#93c5fd';
+const purple50 = '#faf5ff';
+const purpleBorder = '#c4b5fd';
+
+const cs = StyleSheet.create({
+  page: { padding: 36, fontFamily: 'Inter', backgroundColor: '#ffffff', fontSize: 10, color: slate900 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 10, borderBottomWidth: 2, borderBottomColor: red, marginBottom: 14 },
+  logo: { fontSize: 13, color: red, letterSpacing: 1 },
+  subjectBadge: { backgroundColor: red, color: '#ffffff', fontSize: 7, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
+  videoTitle: { fontSize: 11, color: slate600, marginBottom: 14, fontStyle: 'italic' },
+  sectionLabel: { fontSize: 8, color: slate400, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 6, marginTop: 14 },
+  divider: { borderBottomWidth: 1, borderBottomColor: border, marginBottom: 8 },
+  conceptCard: { backgroundColor: slate100, borderRadius: 6, padding: 10, marginBottom: 5, borderLeftWidth: 3, borderLeftColor: red },
+  conceptTitle: { fontSize: 10, color: slate900, marginBottom: 3 },
+  conceptBody: { fontSize: 9, lineHeight: 1.6, color: slate600 },
+  formulaCard: { backgroundColor: yellow, borderRadius: 6, padding: 10, marginBottom: 5, borderLeftWidth: 3, borderLeftColor: yellowBorder },
+  formulaName: { fontSize: 10, color: '#713f12', marginBottom: 2 },
+  formulaText: { fontSize: 11, color: '#1c1917', marginBottom: 3 },
+  formulaWhen: { fontSize: 8, color: '#78350f', fontStyle: 'italic' },
+  factRow: { flexDirection: 'row', marginBottom: 5 },
+  factDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: red, marginRight: 7, marginTop: 3 },
+  factText: { flex: 1, fontSize: 9, lineHeight: 1.6, color: slate900 },
+  additionalCard: { backgroundColor: blue50, borderRadius: 6, padding: 10, marginBottom: 5, borderLeftWidth: 3, borderLeftColor: blueBorder },
+  additionalTitle: { fontSize: 10, color: '#1e3a8a', marginBottom: 3 },
+  additionalBody: { fontSize: 9, lineHeight: 1.6, color: '#1e40af' },
+  refRow: { flexDirection: 'row', marginBottom: 4 },
+  refTerm: { fontSize: 9, color: slate900, width: 90, paddingRight: 6 },
+  refColon: { fontSize: 9, color: red, marginRight: 4 },
+  refDef: { flex: 1, fontSize: 9, color: slate600, lineHeight: 1.5 },
+  tipCard: { backgroundColor: green50, borderRadius: 6, padding: 8, marginBottom: 4, borderLeftWidth: 3, borderLeftColor: greenBorder },
+  tipText: { fontSize: 9, lineHeight: 1.6, color: '#14532d' },
+  essayHeading: { fontSize: 11, color: slate900, marginTop: 10, marginBottom: 4 },
+  essayPara: { fontSize: 9, lineHeight: 1.7, color: slate600, marginBottom: 5 },
+  footer: { position: 'absolute', bottom: 20, left: 36, right: 36, flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: border, paddingTop: 6 },
+  footerText: { fontSize: 7, color: slate400 },
+  twoCol: { flexDirection: 'row', gap: 10 },
+  col: { flex: 1 },
+});
+
+function CheatSheetPdf({ videoTitle, data }: { videoTitle: string; data: CheatSheetData }) {
+  const hasFormulas = data.formulas && data.formulas.length > 0;
+  return (
+    <Document>
+      <Page size="A4" style={cs.page}>
+        <View style={cs.header}>
+          <Text style={cs.logo}>SUMLY — CHEAT SHEET</Text>
+          <Text style={cs.subjectBadge}>{data.subject}</Text>
+        </View>
+
+        <Text style={cs.videoTitle}>Based on: {videoTitle}</Text>
+
+        {/* Essay */}
+        <Text style={cs.sectionLabel}>Complete Guide</Text>
+        <View style={cs.divider} />
+        {data.essay.map((section, i) => (
+          <View key={i}>
+            <Text style={cs.essayHeading}>{section.heading}</Text>
+            {section.paragraphs.map((para, j) => (
+              <Text key={j} style={cs.essayPara}>{para}</Text>
+            ))}
+          </View>
+        ))}
+
+        {/* Formulas (math/science only) */}
+        {hasFormulas && (
+          <>
+            <Text style={cs.sectionLabel}>Formulas &amp; Equations</Text>
+            <View style={cs.divider} />
+            {data.formulas.map((f, i) => (
+              <View key={i} style={cs.formulaCard} wrap={false}>
+                <Text style={cs.formulaName}>{f.name}</Text>
+                <Text style={cs.formulaText}>{f.formula}</Text>
+                <Text style={cs.formulaWhen}>When to use: {f.whenToUse}</Text>
+              </View>
+            ))}
+          </>
+        )}
+
+        {/* Two-column layout: facts + study tips */}
+        <View style={cs.twoCol}>
+          <View style={cs.col}>
+            <Text style={cs.sectionLabel}>Important Facts</Text>
+            <View style={cs.divider} />
+            {data.importantFacts.map((fact, i) => (
+              <View key={i} style={cs.factRow} wrap={false}>
+                <View style={cs.factDot} />
+                <Text style={cs.factText}>{fact}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={cs.col}>
+            <Text style={cs.sectionLabel}>Study Tips</Text>
+            <View style={cs.divider} />
+            {data.studyTips.map((tip, i) => (
+              <View key={i} style={cs.tipCard} wrap={false}>
+                <Text style={cs.tipText}>{tip}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        {/* Additional knowledge beyond the video */}
+        <Text style={cs.sectionLabel}>Beyond the Video — Also Need to Know</Text>
+        <View style={cs.divider} />
+        {data.additionalKnowledge.map((item, i) => (
+          <View key={i} style={cs.additionalCard} wrap={false}>
+            <Text style={cs.additionalTitle}>{item.concept}</Text>
+            <Text style={cs.additionalBody}>{item.explanation}</Text>
+          </View>
+        ))}
+
+        {/* Dictionary */}
+        <Text style={cs.sectionLabel}>Dictionary</Text>
+        <View style={cs.divider} />
+        {data.dictionary.map((entry, i) => (
+          <View key={i} style={cs.refRow} wrap={false}>
+            <Text style={cs.refTerm}>{entry.term}</Text>
+            <Text style={cs.refColon}>—</Text>
+            <Text style={cs.refDef}>{entry.definition}</Text>
+          </View>
+        ))}
+
+        <View style={cs.footer} fixed>
+          <Text style={cs.footerText}>Generated by Sumly</Text>
+          <Text style={cs.footerText} render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+export async function generateCheatSheetPdf(options: { videoTitle: string; data: CheatSheetData }): Promise<Buffer> {
+  const buffer = await renderToBuffer(<CheatSheetPdf {...options} />);
   return Buffer.from(buffer);
 }

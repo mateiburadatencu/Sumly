@@ -1,13 +1,28 @@
 export type Plan = 'basic' | 'plus' | 'pro';
 
+export type VideoCategory =
+  | 'mathematics'
+  | 'science'
+  | 'history'
+  | 'literature'
+  | 'language'
+  | 'tutorial'
+  | 'business'
+  | 'technology'
+  | 'health'
+  | 'philosophy'
+  | 'general';
+
 export interface BasicSummary {
   type: 'basic';
+  videoCategory: VideoCategory;
   overview: string;
   keyPoints: string[];
 }
 
 export interface PlusSummary {
   type: 'plus';
+  videoCategory: VideoCategory;
   executiveSummary: string;
   themeBreakdown: ThemeSection[];
   keyInsights: string[];
@@ -16,6 +31,7 @@ export interface PlusSummary {
 
 export interface ProSummary {
   type: 'pro';
+  videoCategory: VideoCategory;
   executiveSummary: string;
   topicBreakdown: ThemeSection[];
   keyInsights: string[];

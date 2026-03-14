@@ -65,21 +65,11 @@ const PLANS = [
   },
 ];
 
-const PRICE_IDS: Record<string, { monthly: string; annual: string }> = {
-  plus: {
-    monthly: process.env.NEXT_PUBLIC_STRIPE_PRICE_PLUS_MONTHLY || '',
-    annual: process.env.NEXT_PUBLIC_STRIPE_PRICE_PLUS_ANNUAL || '',
-  },
-  pro: {
-    monthly: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_MONTHLY || '',
-    annual: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_ANNUAL || '',
-  },
-};
 
 const FAQ = [
   {
     q: 'What YouTube videos work with Sumly?',
-    a: 'Any YouTube video with captions or subtitles. This includes most lectures, podcasts, tutorials, talks, and interviews. Videos without any subtitles cannot be summarized.',
+    a: 'All YouTube videos work with Sumly — lectures, tutorials, podcasts, interviews, reviews, vlogs, and more. Just paste the link and get your summary instantly.',
   },
   {
     q: 'How do the AI results differ between plans?',
@@ -98,10 +88,31 @@ const FAQ = [
 export default function PricingPage() {
   const [annual, setAnnual] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<string | null>(null);
   const router = useRouter();
 
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    setMounted(true);
+    const fetchPlan = async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('plan, subscription_status')
+          .eq('id', session.user.id)
+          .single();
+        if (profile?.subscription_status === 'active') {
+          setCurrentPlan(profile.plan);
+        } else {
+          setCurrentPlan('basic');
+        }
+      } catch { /* silent */ }
+    };
+    fetchPlan();
+  }, []);
 
   const handleSelect = async (plan: string) => {
     if (plan === 'basic') {
@@ -120,22 +131,20 @@ export default function PricingPage() {
         return;
       }
 
-      const priceId = annual
-        ? PRICE_IDS[plan]?.annual
-        : PRICE_IDS[plan]?.monthly;
-
       const res = await fetch('/api/create-checkout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ priceId }),
+        body: JSON.stringify({ plan, billing: annual ? 'annual' : 'monthly' }),
       });
 
       const data = await res.json();
       if (data.url) {
         window.location.href = data.url;
+      } else {
+        alert(data.error || 'Something went wrong. Please try again.');
       }
     } catch {
       alert('Something went wrong. Please try again.');
@@ -180,6 +189,7 @@ export default function PricingPage() {
               cta={plan.cta}
               onSelect={() => handleSelect(plan.plan)}
               loading={loading === plan.plan}
+              isCurrent={currentPlan === plan.plan}
             />
           ))}
         </div>

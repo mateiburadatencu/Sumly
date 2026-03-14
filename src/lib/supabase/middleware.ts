@@ -26,9 +26,13 @@ export async function updateSession(request: NextRequest) {
       }
     );
 
-    await supabase.auth.getUser();
+    // Race auth check against a 3s timeout so a slow Supabase never blocks page loads
+    await Promise.race([
+      supabase.auth.getUser(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
   } catch {
-    // Supabase auth check failed — continue without session refresh
+    // Supabase auth check failed or timed out — continue without session refresh
   }
 
   return supabaseResponse;

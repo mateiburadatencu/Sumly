@@ -14,14 +14,14 @@
   --color-accent: var(--accent);
   --color-accent-light: var(--accent-light);
   --color-accent-dark: var(--accent-dark);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-fraunces);
+  --font-mono: var(--font-inter);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  font-family: var(--font-fraunces), Georgia, serif;
 }
 
 @keyframes fade-in {
@@ -52,8 +52,26 @@ body {
 }
 
 .hero-pattern {
-  background-image:
-    radial-gradient(at 27% 37%, rgba(220, 38, 38, 0.04) 0px, transparent 50%),
-    radial-gradient(at 97% 21%, rgba(239, 68, 68, 0.03) 0px, transparent 50%),
-    radial-gradient(at 52% 99%, rgba(248, 113, 113, 0.03) 0px, transparent 50%);
+  position: relative;
+}
+
+.hero-pattern::before {
+  content: '';
+  position: fixed;
+  top: 4rem;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url('/bg-doodle-cropped.png');
+  background-repeat: repeat;
+  background-size: 700px auto;
+  background-position: top center;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero-pattern > * {
+  position: relative;
+  z-index: 1;
 }

@@ -27,18 +27,34 @@ const PLAN_STYLES: Record<string, { bg: string; text: string; icon: string }> = 
   pro: { bg: 'bg-red-100', text: 'text-red-700', icon: '👑' },
 };
 
+const CANCEL_REASONS = [
+  "It's too expensive",
+  "I don't use it enough",
+  "I found a better alternative",
+  "Missing features I need",
+  "The summaries aren't accurate enough",
+  "Technical issues",
+  "Other",
+];
+
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelOther, setCancelOther] = useState('');
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelDone, setCancelDone] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
     const load = async () => {
       const supabase = createSupabaseBrowserClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      const user = session?.user ?? null;
 
       if (!user) {
         router.push('/auth/login');
@@ -92,6 +108,38 @@ export default function DashboardPage() {
     }
   };
 
+  const handleCancelSubscription = async () => {
+    const reason = cancelReason === 'Other' ? cancelOther.trim() : cancelReason;
+    if (!reason) return;
+    setCancelLoading(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      const res = await fetch('/api/cancel-subscription', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setCancelDone(true);
+      } else {
+        alert(data.error || 'Failed to cancel subscription.');
+        setShowCancelModal(false);
+      }
+    } catch {
+      alert('Failed to cancel subscription.');
+      setShowCancelModal(false);
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
@@ -135,25 +183,24 @@ export default function DashboardPage() {
               </Link>
             ) : (
               <button
-                onClick={handleManageSubscription}
-                disabled={portalLoading}
-                className="mt-4 rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 transition-all hover:border-red-200 hover:bg-red-50 disabled:opacity-50"
+                onClick={() => setShowCancelModal(true)}
+                className="mt-4 rounded-lg border border-red-200 px-4 py-2 text-xs font-semibold text-red-600 transition-all hover:bg-red-50 disabled:opacity-50"
               >
-                {portalLoading ? 'Loading...' : 'Manage Subscription'}
+                Cancel my subscription
               </button>
             )}
           </div>
 
-          <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+          <div className="flex flex-col justify-between rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Summaries</p>
-            <p className="mt-2 text-3xl font-extrabold text-slate-900">{history.length}</p>
-            <p className="mt-1 text-xs text-slate-400">Total generated</p>
+            <p className="mt-4 text-6xl font-extrabold text-slate-900">{history.length}</p>
+            <p className="mt-2 text-sm font-medium text-slate-400">Total generated</p>
           </div>
 
-          <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+          <div className="flex flex-col justify-between rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Account</p>
-            <p className="mt-2 truncate text-sm font-semibold text-slate-900">{user?.email}</p>
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-4 truncate text-sm font-bold text-slate-900">{user?.email}</p>
+            <p className="mt-2 text-sm font-medium text-slate-400">
               Member since {new Date(user?.created_at || '').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
             </p>
           </div>
@@ -217,6 +264,75 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {showCancelModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl bg-white p-7 shadow-2xl">
+            {cancelDone ? (
+              <div className="text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-3xl">✓</div>
+                <h2 className="text-xl font-bold text-slate-900">Subscription cancelled</h2>
+                <p className="mt-2 text-sm text-slate-500">
+                  Your subscription will remain active until the end of the current billing period. We&apos;re sorry to see you go.
+                </p>
+                <button
+                  onClick={() => { setShowCancelModal(false); setCancelDone(false); setCancelReason(''); setCancelOther(''); }}
+                  className="mt-6 w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-white transition-all hover:bg-slate-800"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <>
+                <h2 className="text-xl font-bold text-slate-900">Cancel subscription</h2>
+                <p className="mt-1 text-sm text-slate-500">We&apos;d love to know why you&apos;re leaving. Please select a reason:</p>
+
+                <div className="mt-5 space-y-2">
+                  {CANCEL_REASONS.map((reason) => (
+                    <button
+                      key={reason}
+                      onClick={() => setCancelReason(reason)}
+                      className={`w-full rounded-xl border px-4 py-3 text-left text-sm font-medium transition-all ${
+                        cancelReason === reason
+                          ? 'border-red-400 bg-red-50 text-red-700'
+                          : 'border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      {reason}
+                    </button>
+                  ))}
+                </div>
+
+                {cancelReason === 'Other' && (
+                  <textarea
+                    value={cancelOther}
+                    onChange={(e) => setCancelOther(e.target.value)}
+                    placeholder="Tell us more..."
+                    rows={3}
+                    className="mt-3 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100"
+                  />
+                )}
+
+                <div className="mt-6 flex gap-3">
+                  <button
+                    onClick={() => { setShowCancelModal(false); setCancelReason(''); setCancelOther(''); }}
+                    className="flex-1 rounded-xl border border-slate-200 py-3 text-sm font-semibold text-slate-600 transition-all hover:bg-slate-50"
+                  >
+                    Keep my plan
+                  </button>
+                  <button
+                    onClick={handleCancelSubscription}
+                    disabled={cancelLoading || !cancelReason || (cancelReason === 'Other' && !cancelOther.trim())}
+                    className="flex-1 rounded-xl bg-red-600 py-3 text-sm font-semibold text-white shadow-md shadow-red-200 transition-all hover:bg-red-700 disabled:opacity-40"
+                  >
+                    {cancelLoading ? 'Cancelling...' : 'Confirm cancel'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -11,6 +11,7 @@ interface Props {
   cta: string;
   onSelect: () => void;
   loading?: boolean;
+  isCurrent?: boolean;
 }
 
 export default function PricingCard({
@@ -24,6 +25,7 @@ export default function PricingCard({
   cta,
   onSelect,
   loading,
+  isCurrent,
 }: Props) {
   const cardClass = dark
     ? 'border-2 border-slate-900 bg-white shadow-xl shadow-slate-200'
@@ -79,13 +81,19 @@ export default function PricingCard({
         ))}
       </ul>
 
-      <button
-        onClick={onSelect}
-        disabled={loading}
-        className={`w-full rounded-xl py-3 text-sm font-semibold transition-all disabled:opacity-50 ${buttonClass}`}
-      >
-        {loading ? 'Loading...' : cta}
-      </button>
+      {isCurrent ? (
+        <div className="w-full rounded-xl border-2 border-emerald-200 bg-emerald-50 py-3 text-center text-sm font-semibold text-emerald-700">
+          ✓ Your current plan
+        </div>
+      ) : (
+        <button
+          onClick={onSelect}
+          disabled={loading}
+          className={`w-full rounded-xl py-3 text-sm font-semibold transition-all disabled:opacity-50 ${buttonClass}`}
+        >
+          {loading ? 'Loading...' : cta}
+        </button>
+      )}
     </div>
   );
 }

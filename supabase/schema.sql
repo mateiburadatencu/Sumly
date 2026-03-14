@@ -16,6 +16,7 @@ create table public.profiles (
   stripe_subscription_id text unique,
   subscription_status text not null default 'inactive'
     check (subscription_status in ('active', 'inactive', 'past_due', 'canceled', 'trialing')),
+  trial_summaries_used integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -100,6 +101,22 @@ create policy "Users can view own usage"
 
 create policy "Service role manages usage"
   on public.user_usage for all using (true);
+
+-- ============================================
+-- TRIAL IP TRACKING (anti-abuse)
+-- ============================================
+-- Records IP addresses that have already consumed trial summaries.
+-- If a new account tries to use a trial from a known trial IP, it is denied.
+create table public.trial_ips (
+  ip_address text primary key,
+  user_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.trial_ips enable row level security;
+
+create policy "Service role manages trial_ips"
+  on public.trial_ips for all using (true);
 
 -- ============================================
 -- SUMMARY HISTORY (per-user log)

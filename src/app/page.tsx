@@ -6,14 +6,6 @@ export default function Home() {
       {/* Hero */}
       <section className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center px-6 pb-20 pt-10">
         <div className="flex w-full max-w-3xl flex-col items-center text-center">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-1.5 text-sm font-medium text-red-700">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
-            </span>
-            Powered by GPT — Free to start
-          </div>
-
           <h1 className="text-5xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-6xl lg:text-7xl">
             YouTube videos,{' '}
             <span className="gradient-text">summarized</span>
@@ -67,10 +59,18 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t border-slate-100 bg-white/50 py-8">
-        <div className="mx-auto flex max-w-5xl flex-col items-center gap-4 px-6 text-center">
+        <div className="mx-auto flex max-w-5xl flex-col items-center gap-3 px-6 text-center">
           <p className="text-xs text-slate-400">
             &copy; {new Date().getFullYear()} Sumly. All rights reserved.
           </p>
+          <p className="text-[11px] text-slate-300">Operated by AGROMAR PROD SRL</p>
+          <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-slate-400">
+            <a href="/terms" className="transition-colors hover:text-red-600">Terms of Service</a>
+            <span className="text-slate-200">·</span>
+            <a href="/privacy" className="transition-colors hover:text-red-600">Privacy Policy</a>
+            <span className="text-slate-200">·</span>
+            <a href="mailto:viralpersona@gmail.com" className="transition-colors hover:text-red-600">viralpersona@gmail.com</a>
+          </div>
         </div>
       </footer>
     </div>

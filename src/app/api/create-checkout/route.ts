@@ -17,9 +17,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
     }
 
-    const { priceId } = await request.json();
-    if (!priceId) {
-      return NextResponse.json({ error: 'Price ID required' }, { status: 400 });
+    const { plan, billing } = await request.json();
+    if (!plan || !billing) {
+      return NextResponse.json({ error: 'Plan and billing required' }, { status: 400 });
+    }
+
+    const PRICE_MAP: Record<string, Record<string, string | undefined>> = {
+      plus: {
+        monthly: process.env.STRIPE_PRICE_PLUS_MONTHLY,
+        annual: process.env.STRIPE_PRICE_PLUS_ANNUAL,
+      },
+      pro: {
+        monthly: process.env.STRIPE_PRICE_PRO_MONTHLY,
+        annual: process.env.STRIPE_PRICE_PRO_ANNUAL,
+      },
+    };
+
+    const priceId = PRICE_MAP[plan]?.[billing];
+    if (!priceId || priceId.startsWith('price_') && priceId.length < 20) {
+      console.error('Invalid or missing Stripe price ID for', plan, billing, ':', priceId);
+      return NextResponse.json({ error: 'This plan is not yet available. Please contact support.' }, { status: 400 });
     }
 
     const { data: profile } = await supabase

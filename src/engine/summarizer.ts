@@ -59,12 +59,18 @@ async function callOpenAI(system: string, user: string): Promise<string> {
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    response_format: { type: 'json_object' },
     max_completion_tokens: 8192,
   });
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error('Empty response from OpenAI');
+  const choice = response.choices[0];
+  // For reasoning models, content may be in message.content or refusal
+  const content = choice?.message?.content ?? (choice?.message as Record<string, unknown>)?.reasoning_content as string ?? null;
+
+  if (!content) {
+    console.error('Empty OpenAI response. finish_reason:', choice?.finish_reason, 'Full choice:', JSON.stringify(choice));
+    throw new Error('Empty response from OpenAI');
+  }
+
   return content;
 }
 
