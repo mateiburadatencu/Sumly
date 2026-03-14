@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
       cancel_at_period_end: true,
     });
 
-    return NextResponse.json({ success: true, cancelAt: subscription.current_period_end });
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Cancel subscription error:', error);
     return NextResponse.json({ error: 'Failed to cancel subscription' }, { status: 500 });
