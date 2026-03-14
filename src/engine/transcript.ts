@@ -7,9 +7,17 @@ const APPROX_CHARS_PER_TOKEN = 4;
 const MAX_CHUNK_CHARS = MAX_CHUNK_TOKENS * APPROX_CHARS_PER_TOKEN;
 const WHISPER_MAX_BYTES = 24 * 1024 * 1024;
 
-const INNERTUBE_CONTEXT = {
-  client: { clientName: 'ANDROID', clientVersion: '20.10.38' },
-};
+const INNERTUBE_CONTEXTS = [
+  // Android client — works for most videos
+  { client: { clientName: 'ANDROID', clientVersion: '20.10.38' } },
+  // TV embedded player — bypasses LOGIN_REQUIRED and age restrictions
+  {
+    client: { clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', clientVersion: '2.0' },
+    thirdParty: { embedUrl: 'https://www.youtube.com' },
+  },
+  // iOS client — additional fallback
+  { client: { clientName: 'IOS', clientVersion: '19.29.1' } },
+];
 
 export interface TranscriptResult {
   text: string;
@@ -42,23 +50,31 @@ async function fetchPlayerData(videoId: string): Promise<{ playerData: PlayerDat
     const durationMatch = html.match(/"lengthSeconds":"(\d+)"/);
     const pageDuration = durationMatch ? parseInt(durationMatch[1], 10) : 0;
 
-    const playerRes = await fetch(
-      `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context: INNERTUBE_CONTEXT, videoId }),
-      }
-    );
-    if (!playerRes.ok) return null;
+    // Try each InnerTube client context until one returns OK playability
+    for (const context of INNERTUBE_CONTEXTS) {
+      const playerRes = await fetch(
+        `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ context, videoId }),
+        }
+      );
+      if (!playerRes.ok) continue;
 
-    const playerData = await playerRes.json();
-    const duration = playerData.videoDetails?.lengthSeconds
-      ? parseInt(playerData.videoDetails.lengthSeconds, 10)
-      : pageDuration;
+      const playerData = await playerRes.json();
+      const status = playerData.playabilityStatus?.status;
+      const duration = playerData.videoDetails?.lengthSeconds
+        ? parseInt(playerData.videoDetails.lengthSeconds, 10)
+        : pageDuration;
 
-    console.log(`[Transcript] Player data fetched: playability=${playerData.playabilityStatus?.status}, duration=${duration}s`);
-    return { playerData, duration };
+      console.log(`[Transcript] Client ${context.client.clientName}: playability=${status}, duration=${duration}s`);
+
+      if (status === 'OK') return { playerData, duration };
+    }
+
+    console.log('[Transcript] All client contexts failed to get OK playability');
+    return null;
   } catch (e) {
     console.log(`[Transcript] fetchPlayerData failed: ${e instanceof Error ? e.message : e}`);
     return null;
