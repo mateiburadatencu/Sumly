@@ -63,7 +63,7 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
 
   console.error('All transcript strategies failed:', errors);
   throw new TranscriptError(
-    'Could not get a transcript for this video. Please try a different video or one with captions enabled.'
+    'This video doesn\'t have captions or subtitles available, which are required for summarization. Most YouTube videos have auto-generated captions — try a different video.'
   );
 }
 

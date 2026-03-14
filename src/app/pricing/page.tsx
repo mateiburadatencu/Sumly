@@ -69,7 +69,7 @@ const PLANS = [
 const FAQ = [
   {
     q: 'What YouTube videos work with Sumly?',
-    a: 'All YouTube videos work with Sumly — lectures, tutorials, podcasts, interviews, reviews, vlogs, and more. Just paste the link and get your summary instantly.',
+    a: 'Most YouTube videos work with Sumly — lectures, tutorials, podcasts, interviews, reviews, vlogs, and more. Videos need to have captions or auto-generated subtitles enabled, which covers the vast majority of public videos on YouTube.',
   },
   {
     q: 'How do the AI results differ between plans?',
