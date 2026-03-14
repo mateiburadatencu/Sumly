@@ -18,22 +18,82 @@ export interface TranscriptResult {
   durationSeconds: number;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PlayerData = Record<string, any>;
+
 /**
- * Fetch transcript with multiple fallback strategies.
+ * Fetch YouTube player data ONCE via InnerTube Android API.
+ * Shared by all strategies to avoid rate-limiting from multiple requests.
+ */
+async function fetchPlayerData(videoId: string): Promise<{ playerData: PlayerData; duration: number } | null> {
+  try {
+    const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    if (!pageRes.ok) return null;
+    const html = await pageRes.text();
+
+    const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)"/);
+    if (!apiKeyMatch) return null;
+
+    const durationMatch = html.match(/"lengthSeconds":"(\d+)"/);
+    const pageDuration = durationMatch ? parseInt(durationMatch[1], 10) : 0;
+
+    const playerRes = await fetch(
+      `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: INNERTUBE_CONTEXT, videoId }),
+      }
+    );
+    if (!playerRes.ok) return null;
+
+    const playerData = await playerRes.json();
+    const duration = playerData.videoDetails?.lengthSeconds
+      ? parseInt(playerData.videoDetails.lengthSeconds, 10)
+      : pageDuration;
+
+    console.log(`[Transcript] Player data fetched: playability=${playerData.playabilityStatus?.status}, duration=${duration}s`);
+    return { playerData, duration };
+  } catch (e) {
+    console.log(`[Transcript] fetchPlayerData failed: ${e instanceof Error ? e.message : e}`);
+    return null;
+  }
+}
+
+/**
+ * Main entry point. Fetches player data once, then tries:
+ * 1. Captions from player data (fastest)
+ * 2. youtube-transcript package (fallback)
+ * 3. Audio download + Whisper (works even when captions are disabled)
  */
 export async function fetchTranscript(videoId: string): Promise<TranscriptResult> {
   const errors: string[] = [];
 
-  // Strategy 1: Android InnerTube API (most reliable)
-  try {
-    console.log(`[Transcript] Strategy 1: Android InnerTube for ${videoId}`);
-    const result = await strategy1_androidInnertube(videoId);
-    if (result) { console.log('[Transcript] Strategy 1 succeeded'); return result; }
-    errors.push('android-innertube: no captions found');
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'failed';
-    console.log(`[Transcript] Strategy 1 failed: ${msg}`);
-    errors.push(`android-innertube: ${msg}`);
+  // Single player data fetch — reused by strategies 1 and 3
+  const playerResult = await fetchPlayerData(videoId);
+  const playerData = playerResult?.playerData ?? null;
+  const duration = playerResult?.duration ?? 0;
+  const playerOk = playerData?.playabilityStatus?.status === 'OK';
+
+  // Strategy 1: Captions from player data
+  if (playerOk) {
+    try {
+      console.log(`[Transcript] Strategy 1: captions for ${videoId}`);
+      const result = await extractCaptionsFromPlayerData(playerData, duration);
+      if (result) { console.log('[Transcript] Strategy 1 succeeded'); return result; }
+      errors.push('android-innertube: no captions found');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'failed';
+      console.log(`[Transcript] Strategy 1 failed: ${msg}`);
+      errors.push(`android-innertube: ${msg}`);
+    }
+  } else {
+    errors.push(`android-innertube: playability=${playerData?.playabilityStatus?.status ?? 'no-data'}`);
   }
 
   // Strategy 2: youtube-transcript npm package
@@ -48,16 +108,20 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
     errors.push(`youtube-transcript: ${msg}`);
   }
 
-  // Strategy 3: Audio download + Whisper (last resort)
-  try {
-    console.log(`[Transcript] Strategy 3: whisper for ${videoId}`);
-    const result = await strategy3_whisper(videoId);
-    console.log('[Transcript] Strategy 3 succeeded');
-    return result;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'failed';
-    console.log(`[Transcript] Strategy 3 failed: ${msg}`);
-    errors.push(`whisper: ${msg}`);
+  // Strategy 3: Audio stream + Whisper (works even without captions)
+  if (playerOk) {
+    try {
+      console.log(`[Transcript] Strategy 3: whisper for ${videoId}`);
+      const result = await strategy3_whisperFromPlayerData(playerData, duration);
+      console.log('[Transcript] Strategy 3 succeeded');
+      return result;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'failed';
+      console.log(`[Transcript] Strategy 3 failed: ${msg}`);
+      errors.push(`whisper: ${msg}`);
+    }
+  } else {
+    errors.push('whisper: skipped (no valid player data)');
   }
 
   console.error('All transcript strategies failed:', JSON.stringify(errors));
@@ -66,102 +130,32 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
   );
 }
 
-// ─── Strategy 1: Android InnerTube API ──────────────────────────
-// Uses the same approach as Python's youtube_transcript_api: fetches
-// player data via the Android client, which returns caption URLs that
-// work for server-side requests (no exp=xpe restriction).
+// ─── Strategy 1: Captions from player data ─────────────────────────
 
-async function strategy1_androidInnertube(videoId: string): Promise<TranscriptResult | null> {
-  // Step 1: Fetch YouTube page to get the InnerTube API key
-  const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-
-  if (!pageRes.ok) return null;
-  const html = await pageRes.text();
-
-  const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)"/);
-  if (!apiKeyMatch) {
-    console.log('[Transcript] S1: could not find INNERTUBE_API_KEY in page');
-    return null;
-  }
-  const apiKey = apiKeyMatch[1];
-
-  // Extract duration from page as backup
-  const durationMatch = html.match(/"lengthSeconds":"(\d+)"/);
-  const pageDuration = durationMatch ? parseInt(durationMatch[1], 10) : 0;
-
-  // Step 2: Call InnerTube player API with Android client
-  const playerRes = await fetch(
-    `https://www.youtube.com/youtubei/v1/player?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        context: INNERTUBE_CONTEXT,
-        videoId,
-      }),
-    }
-  );
-
-  if (!playerRes.ok) {
-    console.log(`[Transcript] S1: player API returned ${playerRes.status}`);
-    return null;
-  }
-
-  const playerData = await playerRes.json();
-  const playability = playerData.playabilityStatus?.status;
-  if (playability !== 'OK') {
-    console.log(`[Transcript] S1: playability status is ${playability}`);
-    return null;
-  }
-
-  const duration = playerData.videoDetails?.lengthSeconds
-    ? parseInt(playerData.videoDetails.lengthSeconds, 10)
-    : pageDuration;
-
-  // Step 3: Extract caption tracks
+async function extractCaptionsFromPlayerData(playerData: PlayerData, duration: number): Promise<TranscriptResult | null> {
   const captionTracks = playerData.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-  if (!captionTracks || captionTracks.length === 0) {
-    console.log('[Transcript] S1: no caption tracks in player response');
-    return null;
-  }
+  if (!captionTracks || captionTracks.length === 0) return null;
 
   console.log(`[Transcript] S1: found ${captionTracks.length} caption track(s)`);
 
-  // Prefer manual English, then auto-generated English, then any
+  // Prefer manual English, then auto-generated English, then any track
   const track =
-    captionTracks.find((t: { languageCode: string; kind?: string }) =>
-      t.languageCode === 'en' && t.kind !== 'asr') ||
+    captionTracks.find((t: { languageCode: string; kind?: string }) => t.languageCode === 'en' && t.kind !== 'asr') ||
     captionTracks.find((t: { languageCode: string }) => t.languageCode === 'en') ||
     captionTracks.find((t: { kind?: string }) => t.kind !== 'asr') ||
     captionTracks[0];
 
-  const baseUrl: string = track.baseUrl;
+  const baseUrl: string = track?.baseUrl;
   if (!baseUrl) return null;
 
-  // Check for exp=xpe which indicates server-side access is blocked
-  if (baseUrl.includes('&exp=xpe')) {
-    console.log('[Transcript] S1: URL has exp=xpe restriction, trying without it');
-  }
-
-  // Step 4: Fetch the transcript XML
   const text = await fetchCaptionText(baseUrl);
-  if (!text) {
-    console.log('[Transcript] S1: could not parse caption response');
-    return null;
-  }
+  if (!text) return null;
 
   return buildResult(text, duration);
 }
 
 async function fetchCaptionText(baseUrl: string): Promise<string | null> {
-  // Remove &fmt=srv3 if present (like the Python package does)
   const cleanUrl = baseUrl.replace('&fmt=srv3', '');
-
   const res = await fetch(cleanUrl);
   if (!res.ok) {
     console.log(`[Transcript] fetchCaptionText: HTTP ${res.status}`);
@@ -169,51 +163,34 @@ async function fetchCaptionText(baseUrl: string): Promise<string | null> {
   }
 
   const body = await res.text();
-  if (!body || body.length === 0) {
-    console.log('[Transcript] fetchCaptionText: empty response body');
-    return null;
-  }
+  if (!body || body.length === 0) return null;
 
-  console.log(`[Transcript] fetchCaptionText: got ${body.length} chars, format: ${body.substring(0, 50)}`);
-
-  // Format 1: <transcript><text start="..." dur="...">content</text>...</transcript>
+  // Format 1: <transcript><text start="..." dur="...">...</text></transcript>
   const textMatches = body.match(/<text[^>]*>([^<]*(?:<[^/][^>]*>[^<]*)*)<\/text>/g);
   if (textMatches && textMatches.length > 0) {
-    const texts = textMatches.map(m => {
-      const content = m.replace(/<[^>]+>/g, '');
-      return decodeXmlEntities(content).trim();
-    }).filter(Boolean);
-    console.log(`[Transcript] parsed ${texts.length} <text> elements`);
-    if (texts.length > 0) return cleanSegmentTexts(texts);
+    const texts = textMatches.map(m => decodeXmlEntities(m.replace(/<[^>]+>/g, '')).trim()).filter(Boolean);
+    if (texts.length > 0) { console.log(`[Transcript] S1: parsed ${texts.length} text elements`); return cleanSegmentTexts(texts); }
   }
 
-  // Format 2: <timedtext format="3"><body><p t="..." d="..."><s>word</s>...</p>...</body>
+  // Format 2: <p t="..." d="...">...</p>
   const pMatches = body.match(/<p [^>]*>([\s\S]*?)<\/p>/g);
   if (pMatches && pMatches.length > 0) {
-    const texts = pMatches.map(m => {
-      const content = m.replace(/<[^>]+>/g, '');
-      return decodeXmlEntities(content).trim();
-    }).filter(Boolean);
-    console.log(`[Transcript] parsed ${texts.length} <p> elements`);
-    if (texts.length > 0) return cleanSegmentTexts(texts);
+    const texts = pMatches.map(m => decodeXmlEntities(m.replace(/<[^>]+>/g, '')).trim()).filter(Boolean);
+    if (texts.length > 0) { console.log(`[Transcript] S1: parsed ${texts.length} p elements`); return cleanSegmentTexts(texts); }
   }
 
-  console.log('[Transcript] fetchCaptionText: unrecognized XML format');
   return null;
 }
 
 function decodeXmlEntities(str: string): string {
   return str
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec)));
 }
 
-// ─── Strategy 2: youtube-transcript npm package ────────────────
+// ─── Strategy 2: youtube-transcript npm package ────────────────────
 
 async function strategy2_youtubeTranscript(videoId: string): Promise<TranscriptResult | null> {
   const segments = await YoutubeTranscript.fetchTranscript(videoId);
@@ -227,87 +204,52 @@ async function strategy2_youtubeTranscript(videoId: string): Promise<TranscriptR
   return buildResult(text, duration);
 }
 
-// ─── Strategy 3: Audio download + Whisper ──────────────────────
-// Uses the same lightweight InnerTube Android API as Strategy 1 to get
-// audio stream URLs directly, avoiding heavy youtubei.js initialization
-// and YouTube's IP blocks on cloud servers.
+// ─── Strategy 3: Audio stream + Whisper ───────────────────────────
+// Reuses already-fetched player data — no extra YouTube requests.
 
-async function strategy3_whisper(videoId: string): Promise<TranscriptResult> {
+async function strategy3_whisperFromPlayerData(playerData: PlayerData, duration: number): Promise<TranscriptResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new TranscriptError('OpenAI API key required for audio transcription.');
 
-  // Step 1: Get player data via InnerTube (same approach as Strategy 1)
-  const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-  if (!pageRes.ok) throw new TranscriptError('Could not access this video.');
-  const html = await pageRes.text();
-
-  const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)"/);
-  if (!apiKeyMatch) throw new TranscriptError('Could not access this video.');
-
-  const durationMatch = html.match(/"lengthSeconds":"(\d+)"/);
-  const duration = durationMatch ? parseInt(durationMatch[1], 10) : 0;
-
-  const playerRes = await fetch(
-    `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ context: INNERTUBE_CONTEXT, videoId }),
-    }
-  );
-  if (!playerRes.ok) throw new TranscriptError('Could not load video data.');
-
-  const playerData = await playerRes.json();
-  if (playerData.playabilityStatus?.status !== 'OK') {
-    throw new TranscriptError('This video is not available for transcription.');
-  }
-
-  // Step 2: Find the best audio-only stream
-  const formats: Array<{ itag: number; mimeType?: string; url?: string; signatureCipher?: string; contentLength?: string }> =
+  const formats: Array<{ itag: number; mimeType?: string; url?: string; signatureCipher?: string }> =
     playerData.streamingData?.adaptiveFormats ?? [];
 
-  console.log(`[Transcript] S3: found ${formats.length} formats, streamingData keys: ${Object.keys(playerData.streamingData ?? {}).join(',')}`);
-  console.log(`[Transcript] S3: format itags: ${formats.map(f => `${f.itag}(url:${!!f.url},cipher:${!!f.signatureCipher})`).join(',')}`);
+  console.log(`[Transcript] S3: ${formats.length} formats, itags: ${formats.map(f => `${f.itag}(url:${!!f.url})`).join(',')}`);
 
-  // Android client returns plain URLs (no cipher needed)
+  // Android client returns plain (non-ciphered) stream URLs
   const audioFormat =
-    formats.find(f => f.itag === 140 && f.url) ||      // m4a 128kbps (best compat with Whisper)
-    formats.find(f => f.itag === 251 && f.url) ||      // webm/opus
+    formats.find(f => f.itag === 140 && f.url) ||   // m4a 128kbps
+    formats.find(f => f.itag === 251 && f.url) ||   // webm/opus
     formats.find(f => f.mimeType?.startsWith('audio/') && f.url);
 
   if (!audioFormat?.url) {
-    const cipherFormats = formats.filter(f => f.signatureCipher);
-    throw new TranscriptError(`No plain audio stream found. Total formats: ${formats.length}, cipher-only: ${cipherFormats.length}`);
+    const cipherCount = formats.filter(f => f.signatureCipher && !f.url).length;
+    throw new TranscriptError(`No plain audio stream (${formats.length} formats, ${cipherCount} cipher-only)`);
   }
 
-  console.log(`[Transcript] S3: downloading itag ${audioFormat.itag}, mime: ${audioFormat.mimeType}`);
+  console.log(`[Transcript] S3: downloading itag ${audioFormat.itag} (${audioFormat.mimeType})`);
 
-  // Step 3: Download audio (with size limit for Whisper's 25MB cap)
   const audioRes = await fetch(audioFormat.url, {
     headers: { Range: `bytes=0-${WHISPER_MAX_BYTES - 1}` },
   });
-  console.log(`[Transcript] S3: audio download status: ${audioRes.status}, size header: ${audioRes.headers.get('content-length')}`);
+  console.log(`[Transcript] S3: HTTP ${audioRes.status}, size: ${audioRes.headers.get('content-length')}`);
+
   if (!audioRes.ok && audioRes.status !== 206) {
-    throw new TranscriptError(`Audio download failed with HTTP ${audioRes.status}`);
+    throw new TranscriptError(`Audio download returned HTTP ${audioRes.status}`);
   }
 
   const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
   if (audioBuffer.length === 0) throw new TranscriptError('Downloaded audio is empty.');
 
-  // Step 4: Transcribe with Whisper
+  console.log(`[Transcript] S3: ${audioBuffer.length} bytes downloaded, transcribing with Whisper`);
+
   const mimeType = audioFormat.mimeType?.split(';')[0] ?? 'audio/mp4';
   const ext = mimeType.includes('webm') ? 'webm' : 'm4a';
   const text = await whisperTranscribe(apiKey, audioBuffer, ext, mimeType);
   return buildResult(text, duration);
 }
 
-
-async function whisperTranscribe(apiKey: string, buffer: Buffer, ext = 'webm', mimeType = 'audio/webm'): Promise<string> {
+async function whisperTranscribe(apiKey: string, buffer: Buffer, ext = 'm4a', mimeType = 'audio/mp4'): Promise<string> {
   const openai = new OpenAI({ apiKey });
   const file = new File([new Uint8Array(buffer)], `audio.${ext}`, { type: mimeType });
 
@@ -322,20 +264,15 @@ async function whisperTranscribe(apiKey: string, buffer: Buffer, ext = 'webm', m
   return text.trim();
 }
 
-// ─── Shared Utilities ──────────────────────────────────────────
+// ─── Shared Utilities ──────────────────────────────────────────────
 
 function cleanSegmentTexts(texts: string[]): string {
   const seen = new Set<string>();
   const lines: string[] = [];
-
   for (const raw of texts) {
     const cleaned = raw.replace(/\[.*?\]/g, '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-    if (cleaned && !seen.has(cleaned)) {
-      seen.add(cleaned);
-      lines.push(cleaned);
-    }
+    if (cleaned && !seen.has(cleaned)) { seen.add(cleaned); lines.push(cleaned); }
   }
-
   return lines.join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -363,12 +300,8 @@ export function chunkTranscript(text: string): string[] {
           else wc += ' ' + w;
         }
         if (wc) current = wc;
-      } else {
-        current = sentence;
-      }
-    } else {
-      current += sentence;
-    }
+      } else { current = sentence; }
+    } else { current += sentence; }
   }
 
   if (current.trim()) chunks.push(current.trim());
