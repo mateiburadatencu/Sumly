@@ -11,18 +11,6 @@ const INNERTUBE_CONTEXT = {
   client: { clientName: 'ANDROID', clientVersion: '20.10.38' },
 };
 
-// Used as fallback for age/content-restricted videos (LOGIN_REQUIRED)
-function getEmbedContext(videoId: string) {
-  return {
-    context: {
-      client: { clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER', clientVersion: '2.0', clientScreen: 'EMBED' },
-      thirdParty: { embedUrl: `https://www.youtube.com/embed/${videoId}` },
-    },
-    contentCheckOk: true,
-    racyCheckOk: true,
-  };
-}
-
 export interface TranscriptResult {
   text: string;
   hash: string;
@@ -85,58 +73,11 @@ async function strategy1_androidInnertube(videoId: string): Promise<TranscriptRe
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept-Language': 'en-US,en;q=0.9',
-      'Cookie': 'CONSENT=YES+1; SOCS=CAI',
     },
   });
 
   if (!pageRes.ok) return null;
   const html = await pageRes.text();
-
-  // First try: extract ytInitialPlayerResponse directly from the page HTML
-  // This works even when the InnerTube API returns LOGIN_REQUIRED
-  try {
-    const keyIdx = html.indexOf('ytInitialPlayerResponse');
-    const startIdx = keyIdx !== -1 ? html.indexOf('{', keyIdx) : -1;
-    let parsed: Record<string, unknown> | null = null;
-    if (startIdx !== -1) {
-      let depth = 0, endIdx = -1, inStr = false, escape = false;
-      for (let i = startIdx; i < html.length; i++) {
-        const ch = html[i];
-        if (escape) { escape = false; continue; }
-        if (ch === '\\' && inStr) { escape = true; continue; }
-        if (ch === '"') { inStr = !inStr; continue; }
-        if (inStr) continue;
-        if (ch === '{') depth++;
-        else if (ch === '}') { depth--; if (depth === 0) { endIdx = i; break; } }
-      }
-      if (endIdx !== -1) {
-        try { parsed = JSON.parse(html.slice(startIdx, endIdx + 1)); } catch { /* bad JSON */ }
-      }
-    }
-    if (parsed) {
-      const status = (parsed.playabilityStatus as { status?: string })?.status;
-      const videoDetails = parsed.videoDetails as { lengthSeconds?: string } | undefined;
-      const pageDur = videoDetails?.lengthSeconds ? parseInt(videoDetails.lengthSeconds, 10) : 0;
-      console.log(`[Transcript] S1: ytInitialPlayerResponse playability=${status}`);
-      if (status === 'OK') {
-        const captions = parsed.captions as { playerCaptionsTracklistRenderer?: { captionTracks?: Array<{ languageCode: string; kind?: string; baseUrl: string }> } } | undefined;
-        const tracks = captions?.playerCaptionsTracklistRenderer?.captionTracks;
-        if (tracks?.length) {
-          console.log(`[Transcript] S1: found ${tracks.length} tracks in page HTML`);
-          const track = tracks.find(t => t.languageCode === 'en' && t.kind !== 'asr')
-            || tracks.find(t => t.languageCode === 'en')
-            || tracks.find(t => t.kind !== 'asr')
-            || tracks[0];
-          if (track?.baseUrl) {
-            const text = await fetchCaptionText(track.baseUrl);
-            if (text) { console.log('[Transcript] S1: succeeded via page HTML'); return buildResult(text, pageDur); }
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.log(`[Transcript] S1: page HTML extract failed: ${e instanceof Error ? e.message : e}`);
-  }
 
   const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)"/);
   if (!apiKeyMatch) {
@@ -162,35 +103,10 @@ async function strategy1_androidInnertube(videoId: string): Promise<TranscriptRe
     return null;
   }
 
-  let playerData = await playerRes.json();
-  let playability = playerData.playabilityStatus?.status;
-  console.log(`[Transcript] S1: playability=${playability}`);
-
-  // Retry with embedded player context for age/content-restricted videos
+  const playerData = await playerRes.json();
+  const playability = playerData.playabilityStatus?.status;
   if (playability !== 'OK') {
-    console.log('[Transcript] S1: retrying with embed context...');
-    try {
-      const embedRes = await fetch(
-        `https://www.youtube.com/youtubei/v1/player?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoId, ...getEmbedContext(videoId) }),
-        }
-      );
-      if (embedRes.ok) {
-        const embedData = await embedRes.json();
-        const embedStatus = embedData.playabilityStatus?.status;
-        console.log(`[Transcript] S1: embed context playability=${embedStatus}`);
-        if (embedStatus === 'OK') { playerData = embedData; playability = 'OK'; }
-      }
-    } catch (e) {
-      console.log(`[Transcript] S1: embed retry failed: ${e instanceof Error ? e.message : e}`);
-    }
-  }
-
-  if (playability !== 'OK') {
-    console.log(`[Transcript] S1: all contexts failed, status=${playability}`);
+    console.log(`[Transcript] S1: playability status is ${playability}`);
     return null;
   }
 
@@ -310,32 +226,8 @@ async function strategy3_whisper(videoId: string): Promise<TranscriptResult> {
   );
   if (!playerRes.ok) throw new TranscriptError(`Player API returned HTTP ${playerRes.status}`);
 
-  let playerData = await playerRes.json();
-  let status = playerData.playabilityStatus?.status;
-  console.log(`[Transcript] S3: playability=${status}`);
-
-  if (status !== 'OK') {
-    console.log('[Transcript] S3: retrying with embed context...');
-    try {
-      const embedRes = await fetch(
-        `https://www.youtube.com/youtubei/v1/player?key=${apiKeyMatch[1]}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoId, ...getEmbedContext(videoId) }),
-        }
-      );
-      if (embedRes.ok) {
-        const embedData = await embedRes.json();
-        const embedStatus = embedData.playabilityStatus?.status;
-        console.log(`[Transcript] S3: embed context playability=${embedStatus}`);
-        if (embedStatus === 'OK') { playerData = embedData; status = 'OK'; }
-      }
-    } catch (e) {
-      console.log(`[Transcript] S3: embed retry failed: ${e instanceof Error ? e.message : e}`);
-    }
-  }
-
+  const playerData = await playerRes.json();
+  const status = playerData.playabilityStatus?.status;
   if (status !== 'OK') throw new TranscriptError(`Video not accessible (${status})`);
 
   const formats: Array<{ itag: number; mimeType?: string; url?: string; signatureCipher?: string }> =
