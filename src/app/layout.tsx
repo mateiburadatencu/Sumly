@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Fraunces, Inter } from 'next/font/google';
 import './globals.css';
 import Navbar from '@/components/navbar';
+import { Analytics } from '@vercel/analytics/next';
 
 const fraunces = Fraunces({
   variable: '--font-fraunces',
@@ -43,6 +44,7 @@ export default function RootLayout({
       <body className={`${fraunces.variable} ${inter.variable} antialiased`}>
         <Navbar />
         <main className="pt-16">{children}</main>
+        <Analytics />
       </body>
     </html>
   );
