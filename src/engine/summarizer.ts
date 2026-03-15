@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { getSummaryPrompt, getMultiChunkMergePrompt } from './prompts';
 import type { Plan, SummaryData } from './types';
 
-const MODEL = 'gpt-5-mini';
+const MODEL = 'gpt-4o-mini';
 const TIMEOUT_MS = 120_000;
 
 function getOpenAIClient(): OpenAI {
