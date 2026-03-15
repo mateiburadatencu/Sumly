@@ -23,6 +23,13 @@ export const metadata: Metadata = {
     title: 'Sumly — Turn YouTube videos into clear notes',
     description: 'Paste any YouTube link and get an AI-powered structured summary in seconds.',
     type: 'website',
+    images: [{ url: '/og-image.png', width: 1040, height: 560, alt: 'Sumly' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Sumly — Turn YouTube videos into clear notes',
+    description: 'Paste any YouTube link and get an AI-powered structured summary in seconds.',
+    images: ['/og-image.png'],
   },
 };
 
