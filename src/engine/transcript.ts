@@ -87,46 +87,41 @@ async function strategy0_supadata(videoId: string): Promise<TranscriptResult | n
     return null;
   }
 
-  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  const endpoint = `https://api.supadata.ai/v1/transcript?url=${encodeURIComponent(videoUrl)}&text=false&mode=auto`;
+  const endpoint = `https://api.supadata.ai/v1/youtube/transcript?videoId=${videoId}&text=true`;
 
+  console.log(`[Transcript] S0: calling ${endpoint}`);
   const res = await fetch(endpoint, {
     headers: { 'x-api-key': apiKey },
   });
 
-  if (res.status === 202) {
-    // Async job — poll until done
-    const job = await res.json() as { jobId?: string };
-    if (!job.jobId) return null;
-    console.log(`[Transcript] S0: async job ${job.jobId}, polling...`);
-    return await pollSupadataJob(job.jobId, apiKey);
-  }
+  console.log(`[Transcript] S0: response status ${res.status}`);
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
+    console.log(`[Transcript] S0: error body: ${body.slice(0, 300)}`);
     throw new Error(`Supadata HTTP ${res.status}: ${body.slice(0, 200)}`);
   }
 
   const data = await res.json() as {
-    content?: Array<{ text: string; offset: number; duration: number }> | string;
+    content?: string | Array<{ text: string; offset: number; duration: number }>;
     jobId?: string;
+    lang?: string;
   };
 
-  // Might still return a jobId on 200 for very large videos
+  console.log(`[Transcript] S0: response keys: ${Object.keys(data).join(', ')}, lang: ${data.lang}`);
+
   if (data.jobId) {
-    console.log(`[Transcript] S0: job ${data.jobId}, polling...`);
+    console.log(`[Transcript] S0: async job ${data.jobId}, polling...`);
     return await pollSupadataJob(data.jobId, apiKey);
   }
 
-  if (!data.content) return null;
-
-  if (typeof data.content === 'string') {
-    const text = data.content.trim();
-    if (!text) return null;
-    return buildResult(text, 0);
+  if (typeof data.content === 'string' && data.content.trim()) {
+    console.log(`[Transcript] S0: got plain text, length=${data.content.length}`);
+    return buildResult(data.content.trim(), 0);
   }
 
   if (Array.isArray(data.content) && data.content.length > 0) {
+    console.log(`[Transcript] S0: got ${data.content.length} chunks`);
     const text = cleanSegmentTexts(data.content.map(c => c.text));
     if (!text) return null;
     const last = data.content[data.content.length - 1];
@@ -134,6 +129,7 @@ async function strategy0_supadata(videoId: string): Promise<TranscriptResult | n
     return buildResult(text, duration);
   }
 
+  console.log(`[Transcript] S0: no usable content in response`);
   return null;
 }
 
@@ -155,9 +151,10 @@ async function pollSupadataJob(jobId: string, apiKey: string): Promise<Transcrip
       content?: Array<{ text: string; offset: number; duration: number }> | string;
     };
 
+    console.log(`[Transcript] S0: poll job status=${data.status}`);
     if (data.status === 'failed') return null;
 
-    if (data.status === 'completed' && data.content) {
+    if ((data.status === 'completed' || !data.status) && data.content) {
       if (typeof data.content === 'string') {
         const text = data.content.trim();
         return text ? buildResult(text, 0) : null;
@@ -175,6 +172,7 @@ async function pollSupadataJob(jobId: string, apiKey: string): Promise<Transcrip
   console.log('[Transcript] S0: job polling timed out');
   return null;
 }
+
 
 // ─── Strategy 1: Android InnerTube API ─────────────────────────────
 
