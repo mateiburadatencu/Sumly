@@ -24,6 +24,18 @@ export interface TranscriptResult {
 export async function fetchTranscript(videoId: string): Promise<TranscriptResult> {
   const errors: string[] = [];
 
+  // Strategy 0: Supadata API (works for all public videos including restricted ones)
+  try {
+    console.log(`[Transcript] Strategy 0: Supadata for ${videoId}`);
+    const result = await strategy0_supadata(videoId);
+    if (result) { console.log('[Transcript] Strategy 0 succeeded'); return result; }
+    errors.push('supadata: no content returned');
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'failed';
+    console.log(`[Transcript] Strategy 0 failed: ${msg}`);
+    errors.push(`supadata: ${msg}`);
+  }
+
   // Strategy 1: Android InnerTube API (most reliable for captioned videos)
   try {
     console.log(`[Transcript] Strategy 1: Android InnerTube for ${videoId}`);
@@ -64,6 +76,104 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptResult
   throw new TranscriptError(
     `Could not get a transcript for this video. ${errors.join(' | ')}`
   );
+}
+
+// ─── Strategy 0: Supadata API ──────────────────────────────────────
+
+async function strategy0_supadata(videoId: string): Promise<TranscriptResult | null> {
+  const apiKey = process.env.SUPADATA_API_KEY;
+  if (!apiKey) {
+    console.log('[Transcript] S0: SUPADATA_API_KEY not set, skipping');
+    return null;
+  }
+
+  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const endpoint = `https://api.supadata.ai/v1/transcript?url=${encodeURIComponent(videoUrl)}&text=false&mode=auto`;
+
+  const res = await fetch(endpoint, {
+    headers: { 'x-api-key': apiKey },
+  });
+
+  if (res.status === 202) {
+    // Async job — poll until done
+    const job = await res.json() as { jobId?: string };
+    if (!job.jobId) return null;
+    console.log(`[Transcript] S0: async job ${job.jobId}, polling...`);
+    return await pollSupadataJob(job.jobId, apiKey);
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Supadata HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = await res.json() as {
+    content?: Array<{ text: string; offset: number; duration: number }> | string;
+    jobId?: string;
+  };
+
+  // Might still return a jobId on 200 for very large videos
+  if (data.jobId) {
+    console.log(`[Transcript] S0: job ${data.jobId}, polling...`);
+    return await pollSupadataJob(data.jobId, apiKey);
+  }
+
+  if (!data.content) return null;
+
+  if (typeof data.content === 'string') {
+    const text = data.content.trim();
+    if (!text) return null;
+    return buildResult(text, 0);
+  }
+
+  if (Array.isArray(data.content) && data.content.length > 0) {
+    const text = cleanSegmentTexts(data.content.map(c => c.text));
+    if (!text) return null;
+    const last = data.content[data.content.length - 1];
+    const duration = Math.ceil((last.offset + last.duration) / 1000);
+    return buildResult(text, duration);
+  }
+
+  return null;
+}
+
+async function pollSupadataJob(jobId: string, apiKey: string): Promise<TranscriptResult | null> {
+  const maxWaitMs = 50000;
+  const pollInterval = 3000;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise(r => setTimeout(r, pollInterval));
+
+    const res = await fetch(`https://api.supadata.ai/v1/transcript/${jobId}`, {
+      headers: { 'x-api-key': apiKey },
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      status?: string;
+      content?: Array<{ text: string; offset: number; duration: number }> | string;
+    };
+
+    if (data.status === 'failed') return null;
+
+    if (data.status === 'completed' && data.content) {
+      if (typeof data.content === 'string') {
+        const text = data.content.trim();
+        return text ? buildResult(text, 0) : null;
+      }
+      if (Array.isArray(data.content) && data.content.length > 0) {
+        const text = cleanSegmentTexts(data.content.map(c => c.text));
+        if (!text) return null;
+        const last = data.content[data.content.length - 1];
+        const duration = Math.ceil((last.offset + last.duration) / 1000);
+        return buildResult(text, duration);
+      }
+    }
+  }
+
+  console.log('[Transcript] S0: job polling timed out');
+  return null;
 }
 
 // ─── Strategy 1: Android InnerTube API ─────────────────────────────
