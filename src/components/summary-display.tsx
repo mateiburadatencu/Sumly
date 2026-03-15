@@ -76,6 +76,19 @@ export default function SummaryDisplay({ result }: Props) {
     }
   };
 
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 150);
+  };
+
   const handleCheatSheet = async () => {
     setGeneratingCheatSheet(true);
     try {
@@ -90,12 +103,7 @@ export default function SummaryDisplay({ result }: Props) {
       });
       if (!res.ok) throw new Error('Generation failed');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `cheatsheet-${result.videoTitle.slice(0, 40)}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
+      triggerDownload(blob, `cheatsheet-${result.videoTitle.slice(0, 40)}.pdf`);
       setCheatSheetGenerated(true);
     } catch {
       alert('Failed to generate cheat sheet. Please try again.');
@@ -120,12 +128,7 @@ export default function SummaryDisplay({ result }: Props) {
       if (!res.ok) throw new Error('Export failed');
 
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `sumly-${result.videoTitle.slice(0, 50)}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
+      triggerDownload(blob, `sumly-${result.videoTitle.slice(0, 50)}.pdf`);
     } catch {
       alert('Failed to export PDF. Please try again.');
     } finally {

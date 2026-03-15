@@ -200,39 +200,41 @@ export default function PricingPage() {
           <h2 className="mb-8 text-center text-2xl font-bold text-slate-900">
             Full feature comparison
           </h2>
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50">
-                  <th className="px-6 py-4 font-semibold text-slate-500">Feature</th>
-                  <th className="px-4 py-4 text-center font-semibold text-slate-500">Basic</th>
-                  <th className="px-4 py-4 text-center font-semibold text-red-600">Plus</th>
-                  <th className="px-4 py-4 text-center font-semibold text-red-700">Pro</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {[
-                  ['Summaries', '1/day', '80/month', '250/month'],
-                  ['Max video length', '15 min', '2 hours', '4 hours'],
-                  ['Summary detail', 'Concise', 'Detailed', 'Full'],
-                  ['AI result quality', 'Standard', 'Better', 'Even better'],
-                  ['Key insights', '6 points', '8-10 insights', '10 insights + quotes'],
-                  ['Actionable takeaways', '—', '—', '5 takeaways'],
-                  ['PDF export', 'Watermark', 'Clean', 'Clean'],
-                  ['Priority processing', '—', 'Faster', 'Highest'],
-                  ['Study features', '—', 'Lite (soon)', 'Full (soon)'],
-                  ['Monthly price', 'Free', '€4.99', '€9.99'],
-                  ['Annual price', 'Free', '€49/yr', '€99/yr'],
-                ].map(([feature, basic, plus, pro], i) => (
-                  <tr key={i} className="hover:bg-slate-50/50">
-                    <td className="px-6 py-3 font-medium text-slate-700">{feature}</td>
-                    <td className="px-4 py-3 text-center text-slate-500">{basic}</td>
-                    <td className="px-4 py-3 text-center font-medium text-slate-700">{plus}</td>
-                    <td className="px-4 py-3 text-center font-medium text-slate-700">{pro}</td>
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[520px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50">
+                    <th className="px-4 py-4 font-semibold text-slate-500 sm:px-6">Feature</th>
+                    <th className="px-3 py-4 text-center font-semibold text-slate-500 sm:px-4">Basic</th>
+                    <th className="px-3 py-4 text-center font-semibold text-red-600 sm:px-4">Plus</th>
+                    <th className="px-3 py-4 text-center font-semibold text-red-700 sm:px-4">Pro</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {[
+                    ['Summaries', '1/day', '80/month', '250/month'],
+                    ['Max video length', '15 min', '2 hours', '4 hours'],
+                    ['Summary detail', 'Concise', 'Detailed', 'Full'],
+                    ['AI result quality', 'Standard', 'Better', 'Even better'],
+                    ['Key insights', '6 points', '8-10 insights', '10 + quotes'],
+                    ['Actionable takeaways', '—', '—', '5 takeaways'],
+                    ['PDF export', 'Watermark', 'Clean', 'Clean'],
+                    ['Priority processing', '—', 'Faster', 'Highest'],
+                    ['Study features', '—', 'Lite (soon)', 'Full (soon)'],
+                    ['Monthly price', 'Free', '€4.99', '€9.99'],
+                    ['Annual price', 'Free', '€49/yr', '€99/yr'],
+                  ].map(([feature, basic, plus, pro], i) => (
+                    <tr key={i} className="hover:bg-slate-50/50">
+                      <td className="px-4 py-3 font-medium text-slate-700 sm:px-6">{feature}</td>
+                      <td className="px-3 py-3 text-center text-slate-500 sm:px-4">{basic}</td>
+                      <td className="px-3 py-3 text-center font-medium text-slate-700 sm:px-4">{plus}</td>
+                      <td className="px-3 py-3 text-center font-medium text-slate-700 sm:px-4">{pro}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
