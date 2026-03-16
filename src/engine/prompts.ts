@@ -118,6 +118,7 @@ CATEGORY GUIDANCE (apply the relevant one based on what you detect):
 ${categoryHint}
 
 Rules:
+- CRITICAL: Detect the language of the transcript. Write the ENTIRE JSON response (overview, keyPoints) in that SAME language. If the transcript is in Romanian, respond in Romanian. If Spanish, respond in Spanish. Never translate to English.
 - Overview must be ${overviewLen}. FORBIDDEN to start with "This video...", "This explains...", "This covers...". Write the actual content directly as an expert
 - Include exactly ${keyPoints} key points — each a direct specific fact, finding, difference, or assessment. Never a meta-description of the video
 - Use real names, numbers, model names, comparisons wherever available
@@ -150,6 +151,7 @@ CATEGORY GUIDANCE (apply the relevant one based on what you detect):
 ${categoryHint}
 
 Rules:
+- CRITICAL: Detect the language of the transcript. Write the ENTIRE JSON response in that SAME language. Never translate to English.
 - Executive summary must be ${overviewLen}. Start with the actual substance. FORBIDDEN: "This video...", "This explains...", "The speaker..."
 - Break into ${topics} themes/sections with specific, direct content — actual differences, findings, assessments, concepts. 2-4 sentences of real substance each
 - Include ${insights} key insights as direct facts and takeaways — never meta-descriptions
@@ -186,6 +188,7 @@ CATEGORY GUIDANCE (apply the relevant one based on what you detect):
 ${categoryHint}
 
 Rules:
+- CRITICAL: Detect the language of the transcript. Write the ENTIRE JSON response in that SAME language. Never translate to English.
 - Executive summary: ${overviewLen}. FORBIDDEN to begin with "This video...", "This explains...", "The speaker...". Open with the actual substance
 - Break into ${topics} topics — each with 3-6 sentences of direct, specific content: actual differences, specs, findings, steps, or assessments. No filler
 - ${insights} key insights as direct facts and assessments, not meta-descriptions
