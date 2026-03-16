@@ -77,7 +77,7 @@ export interface PlanLimits {
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   basic: {
-    maxVideoSeconds: 15 * 60,
+    maxVideoSeconds: 30 * 60,
     dailyLimit: 1,
     monthlyLimit: 30,
   },

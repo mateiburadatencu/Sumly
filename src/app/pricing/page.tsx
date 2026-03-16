@@ -17,7 +17,7 @@ const PLANS = [
     annualPeriod: '',
     features: [
       '1 summary per day',
-      'Videos up to 15 minutes',
+      'Videos up to 30 minutes',
       'Concise summary format',
       'PDF export (with watermark)',
     ],
@@ -214,7 +214,7 @@ export default function PricingPage() {
                 <tbody className="divide-y divide-slate-50">
                   {[
                   ['Summaries', '1/day', '80/month', '250/month'],
-                  ['Max video length', '15 min', '2 hours', '4 hours'],
+                  ['Max video length', '30 min', '2 hours', '4 hours'],
                   ['Summary detail', 'Concise', 'Detailed', 'Full'],
                   ['AI result quality', 'Standard', 'Better', 'Even better'],
                   ['Key insights', '6 points', '8-10 insights', '10 + quotes'],
