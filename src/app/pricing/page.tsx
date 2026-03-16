@@ -213,23 +213,24 @@ export default function PricingPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {[
-                    ['Summaries', '1/day', '80/month', '250/month'],
-                    ['Max video length', '15 min', '2 hours', '4 hours'],
-                    ['Summary detail', 'Concise', 'Detailed', 'Full'],
-                    ['AI result quality', 'Standard', 'Better', 'Even better'],
-                    ['Key insights', '6 points', '8-10 insights', '10 + quotes'],
-                    ['Actionable takeaways', '—', '—', '5 takeaways'],
-                    ['PDF export', 'Watermark', 'Clean', 'Clean'],
-                    ['Priority processing', '—', 'Faster', 'Highest'],
-                    ['Study features', '—', 'Lite (soon)', 'Full (soon)'],
-                    ['Monthly price', 'Free', '€4.99', '€9.99'],
-                    ['Annual price', 'Free', '€49/yr', '€99/yr'],
+                  ['Summaries', '1/day', '80/month', '250/month'],
+                  ['Max video length', '15 min', '2 hours', '4 hours'],
+                  ['Summary detail', 'Concise', 'Detailed', 'Full'],
+                  ['AI result quality', 'Standard', 'Better', 'Even better'],
+                  ['Key insights', '6 points', '8-10 insights', '10 + quotes'],
+                  ['Actionable takeaways', '—', '—', '5 takeaways'],
+                  ['Cheat Sheet generator', '—', '✓', '✓'],
+                  ['PDF export', 'Watermark', 'Clean', 'Clean'],
+                  ['Priority processing', '—', 'Faster', 'Highest'],
+                  ['Study features', '—', 'Lite (soon)', 'Full (soon)'],
+                  ['Monthly price', 'Free', '€4.99', '€9.99'],
+                  ['Annual price', 'Free', '€49/yr', '€99/yr'],
                   ].map(([feature, basic, plus, pro], i) => (
                     <tr key={i} className="hover:bg-slate-50/50">
                       <td className="px-4 py-3 font-medium text-slate-700 sm:px-6">{feature}</td>
-                      <td className="px-3 py-3 text-center text-slate-500 sm:px-4">{basic}</td>
-                      <td className="px-3 py-3 text-center font-medium text-slate-700 sm:px-4">{plus}</td>
-                      <td className="px-3 py-3 text-center font-medium text-slate-700 sm:px-4">{pro}</td>
+                      <td className={`px-3 py-3 text-center sm:px-4 ${basic === '✓' ? 'font-bold text-emerald-600' : basic === '—' ? 'text-slate-300' : 'text-slate-500'}`}>{basic}</td>
+                      <td className={`px-3 py-3 text-center font-medium sm:px-4 ${plus === '✓' ? 'font-bold text-emerald-600' : plus === '—' ? 'text-slate-300' : 'text-slate-700'}`}>{plus}</td>
+                      <td className={`px-3 py-3 text-center font-medium sm:px-4 ${pro === '✓' ? 'font-bold text-emerald-600' : pro === '—' ? 'text-slate-300' : 'text-slate-700'}`}>{pro}</td>
                     </tr>
                   ))}
                 </tbody>
