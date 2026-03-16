@@ -96,14 +96,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // TODO: Re-enable usage limits before production launch
-    // const usageCheck = await checkUsage(userId, ip, plan);
-    // if (!usageCheck.allowed) {
-    //   return NextResponse.json(
-    //     { error: usageCheck.reason },
-    //     { status: 403 }
-    //   );
-    // }
+    const usageCheck = await checkUsage(userId, ip, plan);
+    if (!usageCheck.allowed) {
+      return NextResponse.json(
+        { error: usageCheck.reason },
+        { status: 403 }
+      );
+    }
 
     const result = await processYouTubeVideo({ videoId, plan });
 
