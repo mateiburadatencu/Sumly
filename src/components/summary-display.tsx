@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { SummaryResult, BasicSummary, PlusSummary, ProSummary, VideoCategory } from '@/engine/types';
 import MathText from './math-text';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 const MATH_CATEGORIES: VideoCategory[] = ['mathematics', 'science'];
 const SCHOOL_CATEGORIES: VideoCategory[] = ['mathematics', 'science', 'history', 'literature', 'language', 'philosophy', 'technology', 'health', 'tutorial', 'business', 'general'];
@@ -62,6 +64,7 @@ export default function SummaryDisplay({ result }: Props) {
   const [copied, setCopied] = useState(false);
   const [generatingCheatSheet, setGeneratingCheatSheet] = useState(false);
   const [cheatSheetGenerated, setCheatSheetGenerated] = useState(false);
+  const router = useRouter();
   const badge = PLAN_BADGES[result.plan] || PLAN_BADGES.basic;
   const category = (result.summary as BasicSummary | PlusSummary | ProSummary).videoCategory;
   const categoryMeta = category ? (CATEGORY_META[category] || CATEGORY_META.general) : null;
@@ -92,15 +95,26 @@ export default function SummaryDisplay({ result }: Props) {
   const handleCheatSheet = async () => {
     setGeneratingCheatSheet(true);
     try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { router.push('/auth/login'); return; }
+
       const res = await fetch('/api/cheat-sheet', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({
           videoTitle: result.videoTitle,
           summary: result.summary,
           category,
         }),
       });
+      if (res.status === 403) {
+        router.push('/pricing');
+        return;
+      }
       if (!res.ok) throw new Error('Generation failed');
       const blob = await res.blob();
       triggerDownload(blob, `cheatsheet-${result.videoTitle.slice(0, 40)}.pdf`);
@@ -169,9 +183,9 @@ export default function SummaryDisplay({ result }: Props) {
             <div className="flex shrink-0 items-center gap-2">
               {(!category || SCHOOL_CATEGORIES.includes(category)) && (
                 <button
-                  onClick={handleCheatSheet}
+                  onClick={result.plan === 'basic' ? () => router.push('/pricing') : handleCheatSheet}
                   disabled={generatingCheatSheet || cheatSheetGenerated}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${cheatSheetGenerated ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100'}`}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${cheatSheetGenerated ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : result.plan === 'basic' ? 'border-slate-200 bg-slate-50 text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600' : 'border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100'}`}
                 >
                   {generatingCheatSheet ? (
                     <>
@@ -187,6 +201,13 @@ export default function SummaryDisplay({ result }: Props) {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                       Cheat Sheet Generated
+                    </>
+                  ) : result.plan === 'basic' ? (
+                    <>
+                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                      Cheat Sheet — Upgrade
                     </>
                   ) : (
                     <>

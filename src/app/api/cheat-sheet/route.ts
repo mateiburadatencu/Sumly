@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getOpenAI } from '@/lib/openai/client';
 import type { SummaryData, VideoCategory } from '@/engine/types';
 import { generateCheatSheetPdf } from '@/lib/utils/pdf';
+import { createSupabaseServiceClient } from '@/lib/supabase/server';
 
 export const maxDuration = 120;
 
@@ -39,6 +40,27 @@ function buildSummaryText(summary: SummaryData): string {
 
 export async function POST(req: NextRequest) {
   try {
+    // Verify the user is on Plus or Pro
+    const authHeader = req.headers.get('Authorization');
+    const token = authHeader?.replace('Bearer ', '');
+    if (!token) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+    const supabase = createSupabaseServiceClient();
+    const { data: { user } } = await supabase.auth.getUser(token);
+    if (!user) {
+      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('plan, subscription_status')
+      .eq('id', user.id)
+      .single();
+    const plan = profile?.subscription_status === 'active' ? profile.plan : 'basic';
+    if (plan !== 'plus' && plan !== 'pro') {
+      return NextResponse.json({ error: 'Cheat sheets require a Plus or Pro plan' }, { status: 403 });
+    }
+
     const { videoTitle, summary, category } = await req.json() as {
       videoTitle: string;
       summary: SummaryData;
