@@ -26,6 +26,7 @@ export default function LoginPage() {
         return;
       }
 
+      localStorage.setItem('sumly_has_account', 'true');
       router.push('/');
       router.refresh();
     } catch {
@@ -37,6 +38,7 @@ export default function LoginPage() {
 
   const handleGoogleLogin = async () => {
     const supabase = createSupabaseBrowserClient();
+    localStorage.setItem('sumly_has_account', 'true');
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/api/auth/callback` },

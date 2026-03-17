@@ -41,6 +41,7 @@ export default function SignUpPage() {
         return;
       }
 
+      localStorage.setItem('sumly_has_account', 'true');
       setSuccess(true);
     } catch {
       setError('Something went wrong. Please try again.');
@@ -51,6 +52,7 @@ export default function SignUpPage() {
 
   const handleGoogleSignup = async () => {
     const supabase = createSupabaseBrowserClient();
+    localStorage.setItem('sumly_has_account', 'true');
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/api/auth/callback` },
