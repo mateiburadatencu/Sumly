@@ -14,13 +14,24 @@ export default function SummaryForm() {
   const [error, setError] = useState<string | null>(null);
   const [trialRemaining, setTrialRemaining] = useState<number | null>(null);
   const [hasFreeTrial, setHasFreeTrial] = useState(false);
+  const [showNewUserBanner, setShowNewUserBanner] = useState(false);
 
   useEffect(() => {
     const checkTrial = async () => {
       try {
         const supabase = createSupabaseBrowserClient();
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) return;
+
+        if (!session?.user) {
+          // Not logged in — show banner only if this device has never had an account
+          if (!localStorage.getItem('sumly_has_account')) {
+            setShowNewUserBanner(true);
+          }
+          return;
+        }
+
+        // Logged in — mark device so banner never shows again
+        localStorage.setItem('sumly_has_account', 'true');
 
         const { data: profile } = await supabase
           .from('profiles')
@@ -92,6 +103,26 @@ export default function SummaryForm() {
 
   return (
     <div className="w-full">
+      {showNewUserBanner && (
+        <div className="mb-5 flex items-center gap-3 rounded-2xl border border-red-100 bg-gradient-to-r from-red-50 to-orange-50 px-5 py-3.5 shadow-sm">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 shadow-md shadow-red-200">
+            <svg className="h-4 w-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-slate-900">Create a free account &amp; get a Pro summary</p>
+            <p className="text-xs text-slate-500">Sign up in seconds — your first summary is full Pro quality, on us.</p>
+          </div>
+          <a
+            href="/auth/signup"
+            className="shrink-0 rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-red-200 transition-all hover:bg-red-700"
+          >
+            Sign up free
+          </a>
+        </div>
+      )}
+
       {hasFreeTrial && (
         <div className="mb-5 flex items-center gap-3 rounded-2xl border border-red-100 bg-gradient-to-r from-red-50 to-orange-50 px-5 py-3.5 shadow-sm">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 shadow-md shadow-red-200">

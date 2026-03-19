@@ -1,5 +1,4 @@
 import SummaryForm from '@/components/summary-form';
-import NewUserBanner from '@/components/new-user-banner';
 
 export default function Home() {
   return (
@@ -57,8 +56,6 @@ export default function Home() {
           </div>
         </div>
       </section>
-
-      <NewUserBanner />
 
       {/* Footer */}
       <footer className="border-t border-slate-100 bg-white/50 py-8">
