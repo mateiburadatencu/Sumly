@@ -53,12 +53,13 @@ body {
 
 .hero-pattern {
   position: relative;
+  overflow-x: hidden;
 }
 
 .hero-pattern::before {
   content: '';
-  position: fixed;
-  top: 4rem;
+  position: absolute;
+  top: 0;
   left: 0;
   right: 0;
   bottom: 0;
